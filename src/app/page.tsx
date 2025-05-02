@@ -26,7 +26,6 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import { Input } from '@/components/ui/input'; // Keep Input import if needed elsewhere, but answer uses RadioGroup now
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"; // Import RadioGroup components
 import {
   Select,
@@ -135,10 +134,16 @@ export default function MathQuestPage() {
     setShuffledOptions([]); // Clear shuffled options
     answerForm.reset(); // Clear previous answer selection
     answerForm.clearErrors(); // Clear previous validation errors
+    setIsCheckingAnswer(false); // Ensure check button is enabled
     try {
       const result = await generateMathQuestion(data);
       setCurrentQuestion(result);
-      setShuffledOptions(shuffleArray(result.options)); // Shuffle and store options
+      // Shuffle options only if they exist and have changed
+      if (result.options && result.options !== currentQuestion?.options) {
+         setShuffledOptions(shuffleArray(result.options));
+      } else if (!result.options) {
+         setShuffledOptions([]); // Clear options if none returned
+      }
     } catch (error) {
       console.error('Error generating question:', error);
       toast({
@@ -154,7 +159,7 @@ export default function MathQuestPage() {
   const handleCheckAnswer = (data: AnswerFormData) => {
     if (!currentQuestion || isCheckingAnswer) return;
 
-    setIsCheckingAnswer(true); // Prevent multiple submissions
+    setIsCheckingAnswer(true); // Prevent multiple submissions while checking
 
     const isCorrect = compareAnswers(data.userAnswer, currentQuestion.answer);
 
@@ -168,21 +173,9 @@ export default function MathQuestPage() {
       className: isCorrect ? 'bg-accent text-accent-foreground border-accent' : '',
     });
 
-    // No timeout needed here as we disable the form on correct/checking
-    // setTimeout(() => {
-    //   setIsCheckingAnswer(false);
-    //   if (isCorrect) {
-    //     // Optionally trigger next question automatically or wait for user
-    //   }
-    // }, 1500); // Keep feedback visible for a short duration
-
-     // Keep checking state until a new question is generated or page reloads
-     // setIsCheckingAnswer(false); // Remove this line if you want to disable check button permanently after one check per question
-
-     // Only set isCheckingAnswer to false if the answer was incorrect, allowing another try
-     if (!isCorrect) {
-       setIsCheckingAnswer(false);
-     }
+    // Set checking state back to false after feedback is processed
+    // This allows the "New Question" button to be enabled again.
+    setIsCheckingAnswer(false);
   };
 
   const getIconForType = (type: GenerateMathQuestionInput['type']) => {
@@ -224,7 +217,7 @@ export default function MathQuestPage() {
                     <Select
                       onValueChange={field.onChange}
                       defaultValue={field.value}
-                      disabled={isLoading || isCheckingAnswer} // Disable during checking too
+                      disabled={isLoading} // Only disable during loading new question
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -250,7 +243,7 @@ export default function MathQuestPage() {
                     <Select
                       onValueChange={field.onChange}
                       defaultValue={field.value}
-                      disabled={isLoading || isCheckingAnswer} // Disable during checking too
+                      disabled={isLoading} // Only disable during loading new question
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -276,7 +269,7 @@ export default function MathQuestPage() {
                   </FormItem>
                 )}
               />
-              <Button type="submit" disabled={isLoading || isCheckingAnswer} className="w-full sm:w-auto">
+              <Button type="submit" disabled={isLoading} className="w-full sm:w-auto">
                 {isLoading ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : null}
@@ -319,12 +312,15 @@ export default function MathQuestPage() {
                            <RadioGroup
                              onValueChange={field.onChange}
                              defaultValue={field.value}
+                             // Only disable the options if the answer was correct
+                             // Keep enabled if incorrect to allow another try or review
+                             disabled={feedback === 'correct'}
                              className="flex flex-col space-y-2"
-                             disabled={feedback === 'correct' || isCheckingAnswer} // Disable options after correct answer or while checking
                            >
                              {shuffledOptions.map((option, index) => {
                                const isSelected = field.value === option;
                                const isCorrectOption = compareAnswers(option, currentQuestion.answer);
+                               // Show feedback only after an answer has been submitted (feedback is not 'idle')
                                const showFeedback = feedback !== 'idle';
                                return (
                                 <FormItem key={index} className="flex items-center space-x-3 space-y-0">
@@ -334,8 +330,9 @@ export default function MathQuestPage() {
                                             id={`option-${index}`}
                                             className={cn(
                                               'transition-colors duration-200',
-                                              showFeedback && isCorrectOption && 'border-accent ring-accent text-accent',
-                                              showFeedback && isSelected && !isCorrectOption && 'border-destructive ring-destructive text-destructive'
+                                              // Apply styles based on feedback state
+                                              showFeedback && isCorrectOption && 'border-accent ring-accent text-accent', // Correct option highlight
+                                              showFeedback && isSelected && !isCorrectOption && 'border-destructive ring-destructive text-destructive' // Incorrect selected option highlight
                                             )}
                                         />
                                     </FormControl>
@@ -343,11 +340,13 @@ export default function MathQuestPage() {
                                         htmlFor={`option-${index}`}
                                         className={cn(
                                           "font-normal cursor-pointer flex-1",
-                                          showFeedback && isCorrectOption && 'text-accent font-medium',
-                                          showFeedback && isSelected && !isCorrectOption && 'text-destructive line-through'
+                                           // Apply styles based on feedback state
+                                          showFeedback && isCorrectOption && 'text-accent font-medium', // Correct option text
+                                          showFeedback && isSelected && !isCorrectOption && 'text-destructive line-through' // Incorrect selected option text
                                         )}
                                     >
                                       {option}
+                                      {/* Show icons next to the option based on feedback */}
                                       {showFeedback && isCorrectOption && <CheckCircle className="inline h-4 w-4 ml-2 text-accent" />}
                                       {showFeedback && isSelected && !isCorrectOption && <XCircle className="inline h-4 w-4 ml-2 text-destructive" />}
                                     </FormLabel>
@@ -360,26 +359,26 @@ export default function MathQuestPage() {
                        </FormItem>
                      )}
                    />
-                  <Button type="submit" disabled={feedback === 'correct' || isCheckingAnswer} className="w-full sm:w-auto">
-                     {isCheckingAnswer && feedback === 'idle' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} {/* Show loader only when initially checking */}
+                  {/* Disable Check Answer button if loading new question, or if already answered correctly */}
+                  <Button type="submit" disabled={isLoading || feedback === 'correct' || isCheckingAnswer} className="w-full sm:w-auto">
+                     {isCheckingAnswer ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} {/* Show loader only when actively checking */}
                     Check Answer
                   </Button>
                 </form>
               </Form>
 
               {/* Feedback Area */}
-               <div id="feedback-message" className="min-h-[40px]"> {/* Reserve space */}
+               <div id="feedback-message" className="min-h-[40px] mt-4"> {/* Reserve space */}
                  {feedback === 'correct' && (
                    <div className="flex items-center p-3 rounded-md bg-accent/10 text-accent border border-accent transition-opacity duration-300 ease-in-out opacity-100">
                      <CheckCircle className="h-5 w-5 mr-2" />
-                     <span className="font-medium">Correct! Well done.</span>
+                     <span className="font-medium">Correct! Well done. Press 'New Question' to continue.</span>
                    </div>
                  )}
                  {feedback === 'incorrect' && (
                    <div className="flex items-center p-3 rounded-md bg-destructive/10 text-destructive border border-destructive transition-opacity duration-300 ease-in-out opacity-100">
                      <XCircle className="h-5 w-5 mr-2" />
-                     {/* Show correct answer in feedback only if incorrect */}
-                     <span className="font-medium">Incorrect. The correct answer is marked above.</span>
+                     <span className="font-medium">Incorrect. The correct answer is marked above. Try again or get a new question.</span>
                    </div>
                  )}
               </div>
