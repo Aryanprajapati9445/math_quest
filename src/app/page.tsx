@@ -26,7 +26,8 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
+import { Input } from '@/components/ui/input'; // Keep Input import if needed elsewhere, but answer uses RadioGroup now
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"; // Import RadioGroup components
 import {
   Select,
   SelectContent,
@@ -36,6 +37,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, BrainCircuit, CheckCircle, XCircle, Sigma, Calculator, Shapes, Pi } from 'lucide-react';
+import { cn } from '@/lib/utils'; // Import cn utility
 
 const QuestionSettingsSchema = z.object({
   difficulty: z.enum(['easy', 'medium', 'hard']),
@@ -44,8 +46,11 @@ const QuestionSettingsSchema = z.object({
 
 type QuestionSettings = z.infer<typeof QuestionSettingsSchema>;
 
+// Updated AnswerSchema for RadioGroup
 const AnswerSchema = z.object({
-  userAnswer: z.string().min(1, 'Please enter an answer.'),
+  userAnswer: z.string({
+    required_error: "Please select an answer.",
+  }),
 });
 
 type AnswerFormData = z.infer<typeof AnswerSchema>;
@@ -88,6 +93,7 @@ export default function MathQuestPage() {
   const [isLoading, setIsLoading] = React.useState(false);
   const [isCheckingAnswer, setIsCheckingAnswer] = React.useState(false);
   const [feedback, setFeedback] = React.useState<FeedbackState>('idle');
+  const [shuffledOptions, setShuffledOptions] = React.useState<string[]>([]); // State for shuffled options
   const { toast } = useToast();
 
   const settingsForm = useForm<QuestionSettings>({
@@ -101,19 +107,38 @@ export default function MathQuestPage() {
   const answerForm = useForm<AnswerFormData>({
     resolver: zodResolver(AnswerSchema),
     defaultValues: {
-      userAnswer: '',
+      userAnswer: '', // Initialize userAnswer for RadioGroup
     },
   });
+
+  // Function to shuffle array (Fisher-Yates algorithm)
+  const shuffleArray = (array: string[]) => {
+    let currentIndex = array.length, randomIndex;
+    const newArray = [...array]; // Create a copy
+    // While there remain elements to shuffle.
+    while (currentIndex !== 0) {
+      // Pick a remaining element.
+      randomIndex = Math.floor(Math.random() * currentIndex);
+      currentIndex--;
+      // And swap it with the current element.
+      [newArray[currentIndex], newArray[randomIndex]] = [
+        newArray[randomIndex], newArray[currentIndex]];
+    }
+    return newArray;
+  };
+
 
   const handleGenerateQuestion = async (data: QuestionSettings) => {
     setIsLoading(true);
     setFeedback('idle');
     setCurrentQuestion(null);
-    answerForm.reset(); // Clear previous answer
+    setShuffledOptions([]); // Clear shuffled options
+    answerForm.reset(); // Clear previous answer selection
     answerForm.clearErrors(); // Clear previous validation errors
     try {
       const result = await generateMathQuestion(data);
       setCurrentQuestion(result);
+      setShuffledOptions(shuffleArray(result.options)); // Shuffle and store options
     } catch (error) {
       console.error('Error generating question:', error);
       toast({
@@ -135,15 +160,29 @@ export default function MathQuestPage() {
 
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     toast({
-      title: isCorrect ? 'Correct!' : 'Incorrect', // Simplified title
+      title: isCorrect ? 'Correct!' : 'Incorrect',
       description: isCorrect
         ? 'Excellent work!'
         : `The correct answer is: ${currentQuestion.answer}`,
       variant: isCorrect ? 'default' : 'destructive',
-      className: isCorrect ? 'bg-accent text-accent-foreground border-accent' : '', // Ensure border color matches accent for correct
+      className: isCorrect ? 'bg-accent text-accent-foreground border-accent' : '',
     });
 
-    setIsCheckingAnswer(false);
+    // No timeout needed here as we disable the form on correct/checking
+    // setTimeout(() => {
+    //   setIsCheckingAnswer(false);
+    //   if (isCorrect) {
+    //     // Optionally trigger next question automatically or wait for user
+    //   }
+    // }, 1500); // Keep feedback visible for a short duration
+
+     // Keep checking state until a new question is generated or page reloads
+     // setIsCheckingAnswer(false); // Remove this line if you want to disable check button permanently after one check per question
+
+     // Only set isCheckingAnswer to false if the answer was incorrect, allowing another try
+     if (!isCorrect) {
+       setIsCheckingAnswer(false);
+     }
   };
 
   const getIconForType = (type: GenerateMathQuestionInput['type']) => {
@@ -264,45 +303,73 @@ export default function MathQuestPage() {
                  {currentQuestion.question}
               </div>
 
-              {/* Answer Form */}
+              {/* Answer Form using RadioGroup */}
               <Form {...answerForm}>
-                <form
-                  onSubmit={answerForm.handleSubmit(handleCheckAnswer)}
-                  className="flex flex-col sm:flex-row gap-4 items-start"
-                >
-                  <FormField
-                    control={answerForm.control}
-                    name="userAnswer"
-                    render={({ field }) => (
-                      <FormItem className="flex-grow w-full">
-                        <FormLabel className="sr-only">Your Answer</FormLabel>
-                        <FormControl>
-                          <Input
-                           placeholder="Enter your answer here" {...field}
-                           disabled={feedback === 'correct' || isCheckingAnswer} // Disable if correct or currently checking
-                           className={cn(
-                             'transition-colors duration-200', // Add smooth transition
-                             feedback === 'correct' && 'border-accent ring-accent focus-visible:ring-accent bg-accent/5', // Subtle bg on correct
-                             feedback === 'incorrect' && 'border-destructive ring-destructive focus-visible:ring-destructive bg-destructive/5' // Subtle bg on incorrect
-                           )}
-                           aria-invalid={feedback === 'incorrect'} // Improve accessibility
-                           aria-describedby={feedback !== 'idle' ? 'feedback-message' : undefined}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                 <form
+                   onSubmit={answerForm.handleSubmit(handleCheckAnswer)}
+                   className="space-y-4" // Changed layout for radio group
+                 >
+                   <FormField
+                     control={answerForm.control}
+                     name="userAnswer"
+                     render={({ field }) => (
+                       <FormItem className="space-y-3">
+                         <FormLabel>Select your answer:</FormLabel>
+                         <FormControl>
+                           <RadioGroup
+                             onValueChange={field.onChange}
+                             defaultValue={field.value}
+                             className="flex flex-col space-y-2"
+                             disabled={feedback === 'correct' || isCheckingAnswer} // Disable options after correct answer or while checking
+                           >
+                             {shuffledOptions.map((option, index) => {
+                               const isSelected = field.value === option;
+                               const isCorrectOption = compareAnswers(option, currentQuestion.answer);
+                               const showFeedback = feedback !== 'idle';
+                               return (
+                                <FormItem key={index} className="flex items-center space-x-3 space-y-0">
+                                    <FormControl>
+                                        <RadioGroupItem
+                                            value={option}
+                                            id={`option-${index}`}
+                                            className={cn(
+                                              'transition-colors duration-200',
+                                              showFeedback && isCorrectOption && 'border-accent ring-accent text-accent',
+                                              showFeedback && isSelected && !isCorrectOption && 'border-destructive ring-destructive text-destructive'
+                                            )}
+                                        />
+                                    </FormControl>
+                                    <FormLabel
+                                        htmlFor={`option-${index}`}
+                                        className={cn(
+                                          "font-normal cursor-pointer flex-1",
+                                          showFeedback && isCorrectOption && 'text-accent font-medium',
+                                          showFeedback && isSelected && !isCorrectOption && 'text-destructive line-through'
+                                        )}
+                                    >
+                                      {option}
+                                      {showFeedback && isCorrectOption && <CheckCircle className="inline h-4 w-4 ml-2 text-accent" />}
+                                      {showFeedback && isSelected && !isCorrectOption && <XCircle className="inline h-4 w-4 ml-2 text-destructive" />}
+                                    </FormLabel>
+                                </FormItem>
+                               );
+                              })}
+                           </RadioGroup>
+                         </FormControl>
+                         <FormMessage />
+                       </FormItem>
+                     )}
+                   />
                   <Button type="submit" disabled={feedback === 'correct' || isCheckingAnswer} className="w-full sm:w-auto">
-                     {isCheckingAnswer ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                     {isCheckingAnswer && feedback === 'idle' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} {/* Show loader only when initially checking */}
                     Check Answer
                   </Button>
                 </form>
               </Form>
 
               {/* Feedback Area */}
-               <div id="feedback-message" className="min-h-[40px]"> {/* Reserve space to prevent layout shift */}
-                {feedback === 'correct' && (
+               <div id="feedback-message" className="min-h-[40px]"> {/* Reserve space */}
+                 {feedback === 'correct' && (
                    <div className="flex items-center p-3 rounded-md bg-accent/10 text-accent border border-accent transition-opacity duration-300 ease-in-out opacity-100">
                      <CheckCircle className="h-5 w-5 mr-2" />
                      <span className="font-medium">Correct! Well done.</span>
@@ -311,7 +378,8 @@ export default function MathQuestPage() {
                  {feedback === 'incorrect' && (
                    <div className="flex items-center p-3 rounded-md bg-destructive/10 text-destructive border border-destructive transition-opacity duration-300 ease-in-out opacity-100">
                      <XCircle className="h-5 w-5 mr-2" />
-                     <span className="font-medium">Incorrect. The correct answer is: {currentQuestion.answer}</span>
+                     {/* Show correct answer in feedback only if incorrect */}
+                     <span className="font-medium">Incorrect. The correct answer is marked above.</span>
                    </div>
                  )}
               </div>
@@ -319,7 +387,7 @@ export default function MathQuestPage() {
             </div>
           )}
         </CardContent>
-         <CardFooter className="justify-center text-xs text-muted-foreground pt-4 border-t"> {/* Added border-t */}
+         <CardFooter className="justify-center text-xs text-muted-foreground pt-4 border-t">
              Powered by Generative AI
          </CardFooter>
       </Card>
