@@ -13,6 +13,8 @@ import {z} from 'genkit';
 const GenerateMathQuestionInputSchema = z.object({
   difficulty: z.enum(['easy', 'medium', 'hard']).describe('The difficulty level of the question.'),
   type: z.enum(['algebra', 'calculus', 'geometry', 'trigonometry']).describe('The type of math question.'),
+  studentClass: z.string().optional().describe('The grade level or class of the student (e.g., "8th Grade", "High School", "College Freshman").'), // Added class/grade
+  examType: z.string().optional().describe('The type of exam context (e.g., "Standard Test", "Competitive Exam Prep", "Homework").') // Added exam type
 });
 export type GenerateMathQuestionInput = z.infer<typeof GenerateMathQuestionInputSchema>;
 
@@ -25,6 +27,10 @@ const GenerateMathQuestionOutputSchema = z.object({
 });
 export type GenerateMathQuestionOutput = z.infer<typeof GenerateMathQuestionOutputSchema>;
 
+// Export the output type for use in performance analysis
+export type { GenerateMathQuestionOutput };
+
+
 export async function generateMathQuestion(input: GenerateMathQuestionInput): Promise<GenerateMathQuestionOutput> {
   return generateMathQuestionFlow(input);
 }
@@ -32,16 +38,13 @@ export async function generateMathQuestion(input: GenerateMathQuestionInput): Pr
 const prompt = ai.definePrompt({
   name: 'generateMathQuestionPrompt',
   input: {
-    schema: z.object({
-      difficulty: z.enum(['easy', 'medium', 'hard']).describe('The difficulty level of the question.'),
-      type: z.enum(['algebra', 'calculus', 'geometry', 'trigonometry']).describe('The type of math question.'),
-    }),
+    schema: GenerateMathQuestionInputSchema, // Use the updated input schema
   },
   output: {
-    schema: GenerateMathQuestionOutputSchema, // Use the updated schema with explanation
+    schema: GenerateMathQuestionOutputSchema, // Use the updated output schema with explanation
   },
-  // Updated prompt to request multiple-choice options and explanation
-  prompt: `You are a math question generator. Generate a math question of type {{{type}}} with difficulty {{{difficulty}}}.
+  // Updated prompt to request multiple-choice options and explanation, and consider class/exam type
+  prompt: `You are a math question generator. Generate a math question of type {{{type}}} with difficulty {{{difficulty}}}{{#if studentClass}} tailored for a student in {{{studentClass}}}{{/if}}{{#if examType}} within the context of preparing for a {{{examType}}}{{/if}}.
 
 Provide the correct answer to the question, exactly 4 multiple-choice options, and a clear, step-by-step explanation of how to solve the question.
 
@@ -50,7 +53,7 @@ Provide the correct answer to the question, exactly 4 multiple-choice options, a
 2.  Ensure the 'question' field contains only the question itself.
 3.  Generate exactly 4 multiple-choice 'options' as an array of strings.
 4.  One of the generated 'options' MUST exactly match the correct 'answer'.
-5.  The other 3 options should be plausible incorrect answers (distractors) relevant to the question type and difficulty.
+5.  The other 3 options should be plausible incorrect answers (distractors) relevant to the question type, difficulty{{#if studentClass}}, and class level ({{{studentClass}}}){{/if}}.
 6.  Ensure options maintain a similar format (e.g., all numbers, all expressions).
 7.  Provide a clear, concise, step-by-step 'explanation' for solving the question in the 'explanation' field. This should guide someone through the process of reaching the correct answer.`,
 });
