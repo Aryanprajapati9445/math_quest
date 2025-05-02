@@ -6,16 +6,6 @@ import { Toaster } from '@/components/ui/toaster';
 import { cn } from '@/lib/utils'; // Import cn utility
 
 // No need for separate variable creation, GeistSans and GeistMono provide className and variable directly
-// const geistSans = Geist({
-//   variable: '--font-geist-sans',
-//   subsets: ['latin'], // subsets not needed for geist package
-// });
-
-// const geistMono = Geist_Mono({
-//   variable: '--font-geist-mono',
-//   subsets: ['latin'], // subsets not needed for geist package
-// });
-
 
 export const metadata: Metadata = {
   title: 'Math Quest AI', // Updated title
@@ -28,7 +18,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning> {/* Add suppressHydrationWarning if needed */}
+    <html lang="en" suppressHydrationWarning>
+      {/* The <head> tag is automatically managed by Next.js Metadata API,
+          but we add it here explicitly to avoid the hydration error related
+          to whitespace directly inside <html>.
+          Next.js will merge the metadata defined above into this head. */}
+      <head />
       <body
         className={cn(
           "min-h-screen bg-background font-sans antialiased", // Use cn for conditional classes
