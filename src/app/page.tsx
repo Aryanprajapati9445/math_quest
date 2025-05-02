@@ -35,7 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, BrainCircuit, CheckCircle, XCircle, Sigma, Calculator, Shapes, Pi } from 'lucide-react'; // Replaced SquareRoot with Pi
+import { Loader2, BrainCircuit, CheckCircle, XCircle, Sigma, Calculator, Shapes, Pi } from 'lucide-react';
 
 const QuestionSettingsSchema = z.object({
   difficulty: z.enum(['easy', 'medium', 'hard']),
@@ -52,10 +52,41 @@ type AnswerFormData = z.infer<typeof AnswerSchema>;
 
 type FeedbackState = 'idle' | 'correct' | 'incorrect';
 
+// Helper function for comparing answers, handling potential floating point issues and basic formatting
+const compareAnswers = (userAnswerStr: string, correctAnswerStr: string): boolean => {
+  const normalize = (str: string) => str.trim().toLowerCase().replace(/\s+/g, ''); // Remove all whitespace and convert to lowercase
+
+  const normUserAnswer = normalize(userAnswerStr);
+  const normCorrectAnswer = normalize(correctAnswerStr);
+
+  if (normUserAnswer === normCorrectAnswer) {
+    return true;
+  }
+
+  // Attempt numerical comparison for cases where it might apply
+  const userNum = parseFloat(normUserAnswer);
+  const correctNum = parseFloat(normCorrectAnswer);
+
+  // Check if both are valid numbers and are approximately equal (tolerance for floating point)
+  if (!isNaN(userNum) && !isNaN(correctNum)) {
+    // Define a small tolerance for floating point comparison
+    const tolerance = 1e-6;
+    if (Math.abs(userNum - correctNum) < tolerance) {
+      return true;
+    }
+  }
+
+  // Add more sophisticated comparison logic here if needed (e.g., symbolic math library)
+
+  return false; // Default to false if no match
+};
+
+
 export default function MathQuestPage() {
   const [currentQuestion, setCurrentQuestion] =
     React.useState<GenerateMathQuestionOutput | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
+  const [isCheckingAnswer, setIsCheckingAnswer] = React.useState(false);
   const [feedback, setFeedback] = React.useState<FeedbackState>('idle');
   const { toast } = useToast();
 
@@ -78,7 +109,8 @@ export default function MathQuestPage() {
     setIsLoading(true);
     setFeedback('idle');
     setCurrentQuestion(null);
-    answerForm.reset();
+    answerForm.reset(); // Clear previous answer
+    answerForm.clearErrors(); // Clear previous validation errors
     try {
       const result = await generateMathQuestion(data);
       setCurrentQuestion(result);
@@ -95,22 +127,23 @@ export default function MathQuestPage() {
   };
 
   const handleCheckAnswer = (data: AnswerFormData) => {
-    if (!currentQuestion) return;
+    if (!currentQuestion || isCheckingAnswer) return;
 
-    // Basic comparison, might need refinement for mathematical equivalence
-    const isCorrect =
-      data.userAnswer.trim().toLowerCase() ===
-      currentQuestion.answer.trim().toLowerCase();
+    setIsCheckingAnswer(true); // Prevent multiple submissions
+
+    const isCorrect = compareAnswers(data.userAnswer, currentQuestion.answer);
 
     setFeedback(isCorrect ? 'correct' : 'incorrect');
     toast({
-      title: isCorrect ? 'Correct!' : 'Incorrect!',
+      title: isCorrect ? 'Correct!' : 'Incorrect', // Simplified title
       description: isCorrect
-        ? 'Great job!'
+        ? 'Excellent work!'
         : `The correct answer is: ${currentQuestion.answer}`,
-      variant: isCorrect ? 'default' : 'destructive', // 'default' uses accent color (green)
-      className: isCorrect ? 'bg-accent text-accent-foreground' : '',
+      variant: isCorrect ? 'default' : 'destructive',
+      className: isCorrect ? 'bg-accent text-accent-foreground border-accent' : '', // Ensure border color matches accent for correct
     });
+
+    setIsCheckingAnswer(false);
   };
 
   const getIconForType = (type: GenerateMathQuestionInput['type']) => {
@@ -118,7 +151,7 @@ export default function MathQuestPage() {
       case 'algebra': return <Sigma className="h-5 w-5 mr-2" />;
       case 'calculus': return <Calculator className="h-5 w-5 mr-2" />;
       case 'geometry': return <Shapes className="h-5 w-5 mr-2" />;
-      case 'trigonometry': return <Pi className="h-5 w-5 mr-2" />; // Replaced SquareRoot with Pi
+      case 'trigonometry': return <Pi className="h-5 w-5 mr-2" />;
       default: return <BrainCircuit className="h-5 w-5 mr-2" />;
     }
   };
@@ -152,7 +185,7 @@ export default function MathQuestPage() {
                     <Select
                       onValueChange={field.onChange}
                       defaultValue={field.value}
-                      disabled={isLoading}
+                      disabled={isLoading || isCheckingAnswer} // Disable during checking too
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -178,7 +211,7 @@ export default function MathQuestPage() {
                     <Select
                       onValueChange={field.onChange}
                       defaultValue={field.value}
-                      disabled={isLoading}
+                      disabled={isLoading || isCheckingAnswer} // Disable during checking too
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -196,7 +229,7 @@ export default function MathQuestPage() {
                           <div className="flex items-center"> <Shapes className="h-4 w-4 mr-2"/> Geometry </div>
                         </SelectItem>
                         <SelectItem value="trigonometry">
-                          <div className="flex items-center"> <Pi className="h-4 w-4 mr-2"/> Trigonometry </div> {/* Replaced SquareRoot with Pi */}
+                          <div className="flex items-center"> <Pi className="h-4 w-4 mr-2"/> Trigonometry </div>
                         </SelectItem>
                       </SelectContent>
                     </Select>
@@ -204,7 +237,7 @@ export default function MathQuestPage() {
                   </FormItem>
                 )}
               />
-              <Button type="submit" disabled={isLoading} className="w-full sm:w-auto">
+              <Button type="submit" disabled={isLoading || isCheckingAnswer} className="w-full sm:w-auto">
                 {isLoading ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : null}
@@ -226,9 +259,10 @@ export default function MathQuestPage() {
                  {getIconForType(settingsForm.getValues('type'))}
                  Question:
               </div>
-              <p className="text-xl font-medium pl-7">
+              {/* Use prose for potentially complex math rendering later */}
+              <div className="text-xl font-medium pl-7 prose prose-sm max-w-none">
                  {currentQuestion.question}
-              </p>
+              </div>
 
               {/* Answer Form */}
               <Form {...answerForm}>
@@ -245,42 +279,48 @@ export default function MathQuestPage() {
                         <FormControl>
                           <Input
                            placeholder="Enter your answer here" {...field}
-                           disabled={feedback === 'correct'}
-                           className={`
-                              ${feedback === 'correct' ? 'border-accent ring-accent focus-visible:ring-accent' : ''}
-                              ${feedback === 'incorrect' ? 'border-destructive ring-destructive focus-visible:ring-destructive' : ''}
-                            `}
+                           disabled={feedback === 'correct' || isCheckingAnswer} // Disable if correct or currently checking
+                           className={cn(
+                             'transition-colors duration-200', // Add smooth transition
+                             feedback === 'correct' && 'border-accent ring-accent focus-visible:ring-accent bg-accent/5', // Subtle bg on correct
+                             feedback === 'incorrect' && 'border-destructive ring-destructive focus-visible:ring-destructive bg-destructive/5' // Subtle bg on incorrect
+                           )}
+                           aria-invalid={feedback === 'incorrect'} // Improve accessibility
+                           aria-describedby={feedback !== 'idle' ? 'feedback-message' : undefined}
                           />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                  <Button type="submit" disabled={feedback === 'correct'} className="w-full sm:w-auto">
+                  <Button type="submit" disabled={feedback === 'correct' || isCheckingAnswer} className="w-full sm:w-auto">
+                     {isCheckingAnswer ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     Check Answer
                   </Button>
                 </form>
               </Form>
 
               {/* Feedback Area */}
-              {feedback === 'correct' && (
-                 <div className="flex items-center p-3 rounded-md bg-accent/10 text-accent-foreground border border-accent">
-                   <CheckCircle className="h-5 w-5 mr-2 text-accent" />
-                   <span className="font-medium text-accent">Correct! Well done.</span>
-                 </div>
-               )}
-               {feedback === 'incorrect' && (
-                 <div className="flex items-center p-3 rounded-md bg-destructive/10 text-destructive-foreground border border-destructive">
-                   <XCircle className="h-5 w-5 mr-2 text-destructive" />
-                   <span className="font-medium text-destructive">Incorrect. The correct answer is: {currentQuestion.answer}</span>
-                 </div>
-               )}
+               <div id="feedback-message" className="min-h-[40px]"> {/* Reserve space to prevent layout shift */}
+                {feedback === 'correct' && (
+                   <div className="flex items-center p-3 rounded-md bg-accent/10 text-accent border border-accent transition-opacity duration-300 ease-in-out opacity-100">
+                     <CheckCircle className="h-5 w-5 mr-2" />
+                     <span className="font-medium">Correct! Well done.</span>
+                   </div>
+                 )}
+                 {feedback === 'incorrect' && (
+                   <div className="flex items-center p-3 rounded-md bg-destructive/10 text-destructive border border-destructive transition-opacity duration-300 ease-in-out opacity-100">
+                     <XCircle className="h-5 w-5 mr-2" />
+                     <span className="font-medium">Incorrect. The correct answer is: {currentQuestion.answer}</span>
+                   </div>
+                 )}
+              </div>
 
             </div>
           )}
         </CardContent>
-         <CardFooter className="justify-center text-xs text-muted-foreground pt-4">
-             Powered by GenAI
+         <CardFooter className="justify-center text-xs text-muted-foreground pt-4 border-t"> {/* Added border-t */}
+             Powered by Generative AI
          </CardFooter>
       </Card>
     </div>
