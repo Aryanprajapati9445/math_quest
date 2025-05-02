@@ -3,48 +3,25 @@
  * @fileOverview Analyzes user performance in the Math Quest app and provides suggestions.
  *
  * - analyzeUserPerformance - A function that takes user activity data and returns analysis.
- * - AnalyzePerformanceInput - The input type for the analyzeUserPerformance function.
- * - AnalyzePerformanceOutput - The return type for the analyzeUserPerformance function.
  */
 
 import { ai } from '@/ai/ai-instance';
-import { z } from 'genkit';
+import {
+    AnalyzePerformanceInputSchema,
+    AnalyzePerformanceOutputSchema,
+    type AnalyzePerformanceInput, // Import types as well
+    type AnalyzePerformanceOutput,
+} from '@/ai/schemas/performance-analysis'; // Import from the new schema file
 
-// Define the structure for a single activity record
-const UserActivityRecordSchema = z.object({
-  question: z.string().describe('The math question text.'),
-  difficulty: z.enum(['easy', 'medium', 'hard']).describe('The difficulty of the question.'),
-  type: z.enum(['algebra', 'calculus', 'geometry', 'trigonometry']).describe('The type of the question.'),
-  userAnswer: z.string().optional().describe('The answer the user selected.'),
-  correctAnswer: z.string().describe('The correct answer to the question.'),
-  isCorrect: z.boolean().describe('Whether the user answered correctly.'),
-  timestamp: z.string().datetime().describe('When the user attempted the question.'), // Using string for simplicity, could use Date
-});
-
-export const AnalyzePerformanceInputSchema = z.object({
-  activityHistory: z.array(UserActivityRecordSchema).describe('An array of user activity records.'),
-  desiredFocus: z.string().optional().describe('Optional area the user wants to focus on (e.g., "Calculus", "Hard Geometry").'),
-});
-export type AnalyzePerformanceInput = z.infer<typeof AnalyzePerformanceInputSchema>;
-
-export const AnalyzePerformanceOutputSchema = z.object({
-  summary: z.string().describe('A brief summary of the user\'s overall performance.'),
-  strengths: z.array(z.string()).describe('Areas (types/difficulties) where the user performs well.'),
-  weaknesses: z.array(z.string()).describe('Areas (types/difficulties) where the user struggles.'),
-  suggestions: z.array(z.string()).describe('Actionable suggestions for improvement or next steps.'),
-  suggestedNextQuestionType: z.enum(['algebra', 'calculus', 'geometry', 'trigonometry']).optional().describe('Suggested type for the next question based on performance.'),
-  suggestedNextDifficulty: z.enum(['easy', 'medium', 'hard']).optional().describe('Suggested difficulty for the next question based on performance.'),
-});
-export type AnalyzePerformanceOutput = z.infer<typeof AnalyzePerformanceOutputSchema>;
-
+// Only export the async function
 export async function analyzeUserPerformance(input: AnalyzePerformanceInput): Promise<AnalyzePerformanceOutput> {
   return analyzePerformanceFlow(input);
 }
 
 const prompt = ai.definePrompt({
     name: 'analyzeUserPerformancePrompt',
-    input: { schema: AnalyzePerformanceInputSchema },
-    output: { schema: AnalyzePerformanceOutputSchema },
+    input: { schema: AnalyzePerformanceInputSchema }, // Use imported schema
+    output: { schema: AnalyzePerformanceOutputSchema }, // Use imported schema
     prompt: `You are an AI performance analyst for a math quiz application called Math Quest. Analyze the provided user activity history to identify strengths, weaknesses, and provide actionable suggestions for improvement.
 
 User Activity History:
@@ -70,14 +47,15 @@ Based on this history:
 `,
 });
 
+// Define the flow internally, do not export it directly
 const analyzePerformanceFlow = ai.defineFlow<
   typeof AnalyzePerformanceInputSchema,
   typeof AnalyzePerformanceOutputSchema
 >(
   {
     name: 'analyzePerformanceFlow',
-    inputSchema: AnalyzePerformanceInputSchema,
-    outputSchema: AnalyzePerformanceOutputSchema,
+    inputSchema: AnalyzePerformanceInputSchema, // Use imported schema
+    outputSchema: AnalyzePerformanceOutputSchema, // Use imported schema
   },
   async (input) => {
     // Basic validation: Ensure there's some history to analyze
@@ -87,6 +65,9 @@ const analyzePerformanceFlow = ai.defineFlow<
             strengths: [],
             weaknesses: [],
             suggestions: ["Try answering a few questions first!"],
+            // Ensure optional fields are explicitly undefined or omitted if not applicable
+            suggestedNextQuestionType: undefined,
+            suggestedNextDifficulty: undefined,
         };
     }
 
@@ -103,6 +84,9 @@ const analyzePerformanceFlow = ai.defineFlow<
     return {
         ...output,
         suggestions: conciseSuggestions, // Return potentially shortened suggestions
+        // Ensure optional fields are present even if undefined, matching the schema
+        suggestedNextQuestionType: output.suggestedNextQuestionType,
+        suggestedNextDifficulty: output.suggestedNextDifficulty,
     };
   }
 );

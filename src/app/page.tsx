@@ -11,9 +11,11 @@ import {
 } from '@/ai/flows/generate-math-question';
 import {
   analyzeUserPerformance,
-  type AnalyzePerformanceInput,
-  type AnalyzePerformanceOutput,
-} from '@/ai/flows/analyze-user-performance'; // Import performance analysis flow
+} from '@/ai/flows/analyze-user-performance'; // Import only the function
+import type {
+    AnalyzePerformanceInput,
+    AnalyzePerformanceOutput,
+} from '@/ai/schemas/performance-analysis'; // Import types from the schema file
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -89,7 +91,9 @@ type FeedbackState = 'idle' | 'correct' | 'incorrect';
 
 
 // Helper function for comparing answers, handling potential floating point issues and basic formatting
-const compareAnswers = (userAnswerStr: string, correctAnswerStr: string): boolean => {
+const compareAnswers = (userAnswerStr: string | undefined, correctAnswerStr: string): boolean => {
+  if (userAnswerStr === undefined) return false; // Handle undefined user answer
+
   const normalize = (str: string) => str.trim().toLowerCase().replace(/\s+/g, ''); // Remove all whitespace and convert to lowercase
 
   const normUserAnswer = normalize(userAnswerStr);
@@ -147,6 +151,8 @@ export default function MathQuestPage() {
 
     const currentAttempt = history[currentHistoryIndex];
     const currentQuestion = currentAttempt?.questionData;
+    // Define isViewingHistory based on current state
+    const isViewingHistory = currentHistoryIndex >= 0 && currentHistoryIndex < history.length - 1;
 
     // --- Forms ---
     const settingsForm = useForm<QuestionSettings>({
@@ -161,54 +167,63 @@ export default function MathQuestPage() {
 
     // --- Effects ---
 
-    // Update answer form when navigating history
+    // Update answer form and feedback when navigating history
     React.useEffect(() => {
         if (currentAttempt) {
             answerForm.reset({ userAnswer: currentAttempt.userAnswer || '' });
-            setFeedback(currentAttempt.isCorrect === true ? 'correct' : currentAttempt.isCorrect === false ? 'incorrect' : 'idle');
-            setIsCheckingAnswer(currentAttempt.userAnswer !== undefined); // If an answer exists, it has been checked
-            if (currentAttempt.questionData.options) {
-                 // Shuffle or just set based on your preference for viewing history
-                 // For consistency, let's just set them as they were generated
-                 setShuffledOptions(currentAttempt.questionData.options);
-                 // If you want to reshuffle every time:
-                 // setShuffledOptions(shuffleArray(currentAttempt.questionData.options));
+            const attemptFeedback = currentAttempt.isCorrect === true ? 'correct' : currentAttempt.isCorrect === false ? 'incorrect' : 'idle';
+            setFeedback(attemptFeedback);
+            // Set check state based on whether an answer was submitted in history
+            setIsCheckingAnswer(currentAttempt.userAnswer !== undefined);
+            // Ensure shuffledOptions are set for the current question
+            if (currentAttempt.questionData?.options) {
+                 setShuffledOptions(currentAttempt.questionData.options); // Use the stored options
             } else {
                  setShuffledOptions([]);
             }
         } else {
+            // Reset form and state if there's no current attempt (e.g., initial load)
             answerForm.reset({ userAnswer: '' });
             setFeedback('idle');
             setIsCheckingAnswer(false);
             setShuffledOptions([]);
         }
-        // Update settings form as well when navigating history if desired
-        // if (currentAttempt?.settings) {
-        //     settingsForm.reset(currentAttempt.settings);
-        // }
-
-    }, [currentHistoryIndex, history, answerForm]); // Removed settingsForm from deps to avoid loop
+    }, [currentHistoryIndex, history, answerForm]); // Dependencies
 
 
   // Function to shuffle array (Fisher-Yates algorithm) - client side only
-  const shuffleArray = (array: string[]) => {
-    let currentIndex = array.length, randomIndex;
-    const newArray = [...array];
-    while (currentIndex !== 0) {
-      randomIndex = Math.floor(Math.random() * currentIndex);
-      currentIndex--;
-      [newArray[currentIndex], newArray[randomIndex]] = [
-        newArray[randomIndex], newArray[currentIndex]];
-    }
-    return newArray;
-  };
+  // Moved inside useEffect that depends on currentQuestion to ensure it runs when question changes
+  React.useEffect(() => {
+      const shuffleArray = (array: string[]) => {
+          let currentIndex = array.length, randomIndex;
+          const newArray = [...array];
+          while (currentIndex !== 0) {
+              randomIndex = Math.floor(Math.random() * currentIndex);
+              currentIndex--;
+              [newArray[currentIndex], newArray[randomIndex]] = [
+                  newArray[randomIndex], newArray[currentIndex]];
+          }
+          return newArray;
+      };
+
+      if (currentQuestion?.options && feedback === 'idle' && !isViewingHistory) { // Only shuffle for new questions, not when viewing history or already answered
+          setShuffledOptions(shuffleArray(currentQuestion.options));
+      } else if (currentQuestion?.options) {
+          // For history or answered questions, just set the options as they were
+          setShuffledOptions(currentQuestion.options);
+      } else {
+          setShuffledOptions([]); // Clear if no options
+      }
+
+  }, [currentQuestion, feedback, isViewingHistory]); // Add feedback and isViewingHistory
+
 
   // --- Event Handlers ---
 
   const handleGenerateQuestion = async (data: QuestionSettings) => {
     setIsLoading(true);
     setFeedback('idle');
-    // setCurrentQuestion(null); // Replaced by history logic
+    // Don't clear currentQuestion immediately, wait for new one
     setShuffledOptions([]);
     answerForm.reset();
     answerForm.clearErrors();
@@ -222,9 +237,18 @@ export default function MathQuestPage() {
         timestamp: new Date().toISOString(),
         settings: data, // Store the settings used
       };
-      // Add to history and move to the new question
-      setHistory(prev => [...prev, newAttempt]);
-      setCurrentHistoryIndex(prev => prev + 1);
+      // Add to history and move index to the new question
+      const newHistory = [...history, newAttempt];
+      setHistory(newHistory);
+      setCurrentHistoryIndex(newHistory.length - 1); // Go to the latest index
+      setFeedback('idle'); // Ensure feedback is reset for the new question
+      setIsCheckingAnswer(false); // Ensure checking state is reset
+      // Ensure result.options exists before shuffling
+      if(result.options) {
+         setShuffledOptions(shuffleArray(result.options)); // Shuffle options for the new question
+      } else {
+         setShuffledOptions([]);
+      }
     } catch (error) {
       console.error('Error generating question:', error);
       toast({
@@ -238,20 +262,22 @@ export default function MathQuestPage() {
   };
 
   const handleCheckAnswer = (data: AnswerFormData) => {
-    if (!currentQuestion || isCheckingAnswer || currentHistoryIndex < 0) return;
+    // Guard conditions
+    if (!currentQuestion || isCheckingAnswer || currentHistoryIndex < 0 || isViewingHistory || feedback !== 'idle') return;
 
-    setIsCheckingAnswer(true);
+    setIsCheckingAnswer(true); // Indicate checking process starts
 
     const isCorrect = compareAnswers(data.userAnswer, currentQuestion.answer);
     const currentFeedback = isCorrect ? 'correct' : 'incorrect';
-    setFeedback(currentFeedback);
+    setFeedback(currentFeedback); // Update feedback state immediately
 
      // Update the current attempt in history
      setHistory(prev => {
         const newHistory = [...prev];
-        if (newHistory[currentHistoryIndex]) {
-            newHistory[currentHistoryIndex] = {
-                ...newHistory[currentHistoryIndex],
+        const attemptIndex = currentHistoryIndex; // Use index captured at the start
+        if (newHistory[attemptIndex]) {
+            newHistory[attemptIndex] = {
+                ...newHistory[attemptIndex],
                 userAnswer: data.userAnswer,
                 isCorrect: isCorrect,
             };
@@ -269,15 +295,14 @@ export default function MathQuestPage() {
       className: isCorrect ? 'bg-accent text-accent-foreground border-accent' : '',
     });
 
-    // Don't automatically set isCheckingAnswer back to false
-    // Let the user decide to get a new question or review
+    // Important: Keep isCheckingAnswer true after checking to prevent re-submission
+    // It will be reset only when navigating or generating a new question.
   };
 
     const handleGoToPrevious = () => {
         if (currentHistoryIndex > 0) {
             setCurrentHistoryIndex(prev => prev - 1);
-            setFeedback('idle'); // Reset feedback when navigating
-            setIsCheckingAnswer(false); // Reset check state
+            // State updates (feedback, isCheckingAnswer, options) handled by useEffect
             setPerformanceAnalysis(null); // Clear analysis when navigating
         }
     };
@@ -285,17 +310,21 @@ export default function MathQuestPage() {
     const handleGoToNext = () => {
         if (currentHistoryIndex < history.length - 1) {
             setCurrentHistoryIndex(prev => prev + 1);
-            setFeedback('idle'); // Reset feedback when navigating
-            setIsCheckingAnswer(false); // Reset check state
+             // State updates (feedback, isCheckingAnswer, options) handled by useEffect
             setPerformanceAnalysis(null); // Clear analysis when navigating
         }
-        // Optionally, if at the latest question and trying to go next, generate a new one
-        // else if (currentHistoryIndex === history.length - 1) {
-        //     handleGenerateQuestion(settingsForm.getValues());
-        // }
     };
 
     const handleEndQuest = async () => {
+        if (history.length === 0) {
+             toast({
+                title: "No History",
+                description: "Answer some questions first to get an analysis.",
+                variant: "destructive",
+            });
+            return;
+        }
+
         setIsAnalyzing(true);
         setPerformanceAnalysis(null); // Clear previous analysis
 
@@ -307,12 +336,24 @@ export default function MathQuestPage() {
                 type: attempt.settings.type,           // Use settings from the attempt
                 userAnswer: attempt.userAnswer,
                 correctAnswer: attempt.questionData.answer,
-                isCorrect: !!attempt.isCorrect, // Ensure boolean
+                // Ensure isCorrect is boolean, default to false if undefined (e.g., skipped)
+                isCorrect: attempt.isCorrect === undefined ? false : attempt.isCorrect,
                 timestamp: attempt.timestamp,
-            })),
-            // Optional: Add desired focus from settings if applicable
-             desiredFocus: settingsForm.getValues().type || settingsForm.getValues().difficulty,
+            })).filter(a => a.userAnswer !== undefined), // Only include answered questions
+             // Optional: Add desired focus from settings if applicable
+             desiredFocus: settingsForm.getValues().type || settingsForm.getValues().difficulty || undefined, // Ensure it's string or undefined
         };
+
+        // Don't analyze if there are no *answered* questions
+        if (analysisInput.activityHistory.length === 0) {
+            toast({
+                title: "No Answers",
+                description: "You need to answer at least one question for analysis.",
+                variant: "destructive",
+            });
+            setIsAnalyzing(false);
+            return;
+        }
 
 
         try {
@@ -326,7 +367,7 @@ export default function MathQuestPage() {
             console.error("Error analyzing performance:", error);
             toast({
                 title: "Analysis Error",
-                description: "Could not analyze performance. Please try again later.",
+                description: `Could not analyze performance. ${error instanceof Error ? error.message : 'Please try again later.'}`,
                 variant: "destructive",
             });
         } finally {
@@ -342,20 +383,22 @@ export default function MathQuestPage() {
 
     // --- Helper Functions ---
 
-  const getIconForType = (type: GenerateMathQuestionInput['type']) => {
+  const getIconForType = (type: GenerateMathQuestionInput['type'] | undefined) => { // Allow undefined
     switch (type) {
       case 'algebra': return <Sigma className="h-5 w-5 mr-2" />;
       case 'calculus': return <Calculator className="h-5 w-5 mr-2" />;
       case 'geometry': return <Shapes className="h-5 w-5 mr-2" />;
       case 'trigonometry': return <Pi className="h-5 w-5 mr-2" />;
-      default: return <BrainCircuit className="h-5 w-5 mr-2" />;
+      default: return <BrainCircuit className="h-5 w-5 mr-2" />; // Default icon
     }
   };
 
   // --- Render Logic ---
-    const isViewingHistory = currentHistoryIndex < history.length - 1;
+    // Recalculate isViewingHistory based on potentially updated state (already done above)
+    // Can generate new if not loading AND not currently viewing older history
     const canGenerateNew = !isLoading && !isViewingHistory;
-    const canCheckAnswer = !isCheckingAnswer && !isLoading && currentQuestion && feedback === 'idle' && !isViewingHistory;
+    // Can check answer if: not loading, not checking, question exists, feedback is idle (not yet answered), AND not viewing history
+    const canCheckAnswer = !isLoading && !isCheckingAnswer && currentQuestion && feedback === 'idle' && !isViewingHistory;
 
 
   return (
@@ -393,6 +436,7 @@ export default function MathQuestPage() {
                             <Select
                               onValueChange={field.onChange}
                               defaultValue={field.value}
+                              value={field.value} // Ensure controlled component
                             >
                               <FormControl>
                                 <SelectTrigger>
@@ -418,6 +462,7 @@ export default function MathQuestPage() {
                             <Select
                               onValueChange={field.onChange}
                               defaultValue={field.value}
+                              value={field.value} // Ensure controlled component
                             >
                               <FormControl>
                                 <SelectTrigger>
@@ -442,7 +487,7 @@ export default function MathQuestPage() {
                             <FormItem>
                                 <FormLabel>Class/Grade (Optional)</FormLabel>
                                 <FormControl>
-                                <Input placeholder="e.g., 9th Grade, College" {...field} />
+                                <Input placeholder="e.g., 9th Grade, College" {...field} value={field.value ?? ''}/>
                                 </FormControl>
                                 <FormMessage />
                             </FormItem>
@@ -455,7 +500,7 @@ export default function MathQuestPage() {
                             <FormItem>
                                 <FormLabel>Exam Context (Optional)</FormLabel>
                                 <FormControl>
-                                <Input placeholder="e.g., SAT Prep, Final Exam" {...field} />
+                                <Input placeholder="e.g., SAT Prep, Final Exam" {...field} value={field.value ?? ''} />
                                 </FormControl>
                                 <FormMessage />
                             </FormItem>
@@ -496,6 +541,14 @@ export default function MathQuestPage() {
                 </div>
              )}
 
+             {isLoading && history.length > 0 && currentHistoryIndex === history.length -1 && ( // Show loading new question when at the end
+                <div className="flex-grow flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
+                  <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+                  <p>Generating next question...</p>
+                </div>
+             )}
+
+
              {!isLoading && history.length === 0 && ( // Show welcome/start state
                  <div className="flex-grow flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
                     <Sparkles className="h-12 w-12 text-primary mb-4" />
@@ -508,13 +561,14 @@ export default function MathQuestPage() {
                  </div>
              )}
 
-            {currentQuestion && (
+            {/* Only render question area if not loading initial OR not loading next */}
+            {(!isLoading || history.length > 0) && currentQuestion && (
                 <div className="flex-grow p-6 border rounded-lg bg-card shadow-inner space-y-4">
                     {/* Question Header */}
                     <div className="flex items-center justify-between text-muted-foreground text-sm">
                        <span>{`Question ${currentHistoryIndex + 1} of ${history.length}`}</span>
                        <div className="flex items-center space-x-1">
-                         {getIconForType(currentAttempt?.settings?.type || 'algebra')}
+                         {getIconForType(currentAttempt?.settings?.type)}
                          <span>{currentAttempt?.settings?.type || 'N/A'} | {currentAttempt?.settings?.difficulty || 'N/A'}</span>
                          {currentAttempt?.settings?.studentClass && <span className="hidden sm:inline"> | {currentAttempt.settings.studentClass}</span>}
                          {currentAttempt?.settings?.examType && <span className="hidden sm:inline"> | {currentAttempt.settings.examType}</span>}
@@ -544,51 +598,62 @@ export default function MathQuestPage() {
                                <RadioGroup
                                  onValueChange={field.onChange}
                                  value={field.value} // Controlled component
-                                 // Disable if feedback is given OR if viewing history and an answer was submitted
-                                 disabled={feedback !== 'idle' || (isViewingHistory && currentAttempt?.userAnswer !== undefined) || isLoading || isCheckingAnswer}
+                                 // Disable if feedback is given OR if viewing history and an answer was submitted OR loading new q
+                                 disabled={feedback !== 'idle' || isLoading || isCheckingAnswer }
                                  className="grid grid-cols-1 sm:grid-cols-2 gap-3" // Responsive grid
                                >
-                                 {shuffledOptions.map((option, index) => {
+                                 {(shuffledOptions || []).map((option, index) => { // Add fallback for shuffledOptions
                                    const isSelected = field.value === option;
                                    const isCorrectOption = compareAnswers(option, currentQuestion.answer);
                                    // Show feedback only AFTER checking OR if viewing history where answer exists
-                                   const showFeedback = feedback !== 'idle' || (isViewingHistory && currentAttempt?.userAnswer !== undefined);
-                                   const feedbackToShow = currentAttempt?.isCorrect === true ? 'correct' : currentAttempt?.isCorrect === false ? 'incorrect' : feedback;
+                                   const showFeedback = feedback !== 'idle'; // Simplified: show if feedback is present
+                                   // Determine feedback state based on current attempt or current feedback state
+                                   const finalFeedbackState = currentAttempt?.isCorrect !== undefined
+                                        ? (currentAttempt.isCorrect ? 'correct' : 'incorrect')
+                                        : feedback;
 
 
                                    return (
-                                    <FormItem key={`${currentHistoryIndex}-${index}`} className={cn( // Use index combined with history index for key
+                                    <FormItem
+                                      key={`${currentHistoryIndex}-${option}-${index}`} // More robust key
+                                      className={cn(
                                       "flex items-center space-x-3 space-y-0 rounded-md border p-3 transition-all",
-                                       // Base styles
-                                      !showFeedback && "hover:bg-muted/50 cursor-pointer",
+                                       // Base styles when interactive
+                                      finalFeedbackState === 'idle' && !isLoading && !isCheckingAnswer && "hover:bg-muted/50 cursor-pointer",
                                       // Styles when an answer is selected (before checking)
-                                      isSelected && !showFeedback && "bg-primary/10 border-primary",
-                                      // Feedback styles after checking or when viewing history
-                                      showFeedback && isCorrectOption && "bg-accent/10 border-accent text-accent-foreground",
-                                      showFeedback && isSelected && !isCorrectOption && "bg-destructive/10 border-destructive text-destructive-foreground line-through",
+                                      isSelected && finalFeedbackState === 'idle' && "bg-primary/10 border-primary",
+                                      // Feedback styles after checking
+                                      finalFeedbackState !== 'idle' && isCorrectOption && "bg-accent/10 border-accent text-accent-foreground", // Correct answer always highlighted green after check
+                                      finalFeedbackState !== 'idle' && isSelected && !isCorrectOption && "bg-destructive/10 border-destructive text-destructive-foreground line-through", // Incorrect selection highlighted red
+                                      finalFeedbackState !== 'idle' && !isSelected && !isCorrectOption && "opacity-60", // Fade out incorrect, unselected options
                                       // Disabled styles
-                                      (feedback !== 'idle' || (isViewingHistory && currentAttempt?.userAnswer !== undefined) || isLoading || isCheckingAnswer) && "cursor-not-allowed opacity-70"
+                                      (finalFeedbackState !== 'idle' || isLoading || isCheckingAnswer) && "cursor-not-allowed" // General disabled cursor
                                     )}>
                                         <FormControl>
                                             <RadioGroupItem
                                                 value={option}
                                                 id={`option-${currentHistoryIndex}-${index}`}
                                                 className={cn(
-                                                    // More specific styling if needed, handled mostly by parent FormItem now
-                                                    showFeedback && isCorrectOption && 'border-accent ring-accent text-accent',
-                                                    showFeedback && isSelected && !isCorrectOption && 'border-destructive ring-destructive text-destructive'
+                                                    // Specific styling for the radio button itself based on feedback
+                                                    finalFeedbackState !== 'idle' && isCorrectOption && 'border-accent ring-accent text-accent',
+                                                    finalFeedbackState !== 'idle' && isSelected && !isCorrectOption && 'border-destructive ring-destructive text-destructive'
                                                 )}
+                                                // Disable individual items based on feedback state as well
+                                                disabled={finalFeedbackState !== 'idle' || isLoading || isCheckingAnswer}
                                             />
                                         </FormControl>
                                         <FormLabel
                                             htmlFor={`option-${currentHistoryIndex}-${index}`}
-                                            className="font-normal flex-1 cursor-pointer"
-                                            // Text styling moved to parent FormItem
+                                            className={cn(
+                                                "font-normal flex-1",
+                                                // Make label clickable only when interactive
+                                                (finalFeedbackState === 'idle' && !isLoading && !isCheckingAnswer) ? "cursor-pointer" : "cursor-default"
+                                            )}
                                         >
                                             {option}
-                                             {/* Icons shown after feedback or on history view */}
-                                             {showFeedback && isCorrectOption && <CheckCircle className="inline h-4 w-4 ml-2 text-accent flex-shrink-0" />}
-                                             {showFeedback && isSelected && !isCorrectOption && <XCircle className="inline h-4 w-4 ml-2 text-destructive flex-shrink-0" />}
+                                             {/* Icons shown after checking */}
+                                             {finalFeedbackState !== 'idle' && isCorrectOption && <CheckCircle className="inline h-4 w-4 ml-2 text-accent flex-shrink-0" />}
+                                             {finalFeedbackState !== 'idle' && isSelected && !isCorrectOption && <XCircle className="inline h-4 w-4 ml-2 text-destructive flex-shrink-0" />}
                                         </FormLabel>
                                     </FormItem>
                                    );
@@ -599,18 +664,17 @@ export default function MathQuestPage() {
                            </FormItem>
                          )}
                        />
-                      {/* Show Check Answer only if not viewing history and answer not yet checked */}
-                      {!isViewingHistory && feedback === 'idle' && (
-                        <Button type="submit" disabled={!canCheckAnswer || !answerForm.formState.isValid} className="w-full sm:w-auto">
-                           {isCheckingAnswer ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                          Check Answer
+                      {/* Show Check Answer button only if interaction is possible */}
+                      {canCheckAnswer && (
+                        <Button type="submit" disabled={!answerForm.formState.isValid} className="w-full sm:w-auto">
+                           Check Answer
                         </Button>
                       )}
                     </form>
                   </Form>
 
                   {/* Explanation Area */}
-                   {(feedback !== 'idle' || (isViewingHistory && currentAttempt?.userAnswer !== undefined)) && currentQuestion.explanation && ( // Show if feedback given OR viewing history with answer
+                   {feedback !== 'idle' && currentQuestion.explanation && ( // Show if feedback is 'correct' or 'incorrect'
                      <>
                        <Separator className="my-4" />
                        <div className="space-y-2 animate-in fade-in duration-500">
@@ -619,6 +683,7 @@ export default function MathQuestPage() {
                                Explanation:
                            </div>
                            <div className="text-sm text-muted-foreground prose prose-sm max-w-none pl-7 break-words">
+                               {/* Render explanation text safely */}
                                {currentQuestion.explanation.split('\n').map((line, index) => (
                                 <React.Fragment key={index}>
                                     {line}
@@ -645,15 +710,15 @@ export default function MathQuestPage() {
                      <AlertTitle className="text-primary font-semibold">Performance Analysis</AlertTitle>
                      <AlertDescription className="space-y-2 text-foreground">
                          <p><strong>Summary:</strong> {performanceAnalysis.summary}</p>
-                         {performanceAnalysis.strengths.length > 0 && (
+                         {performanceAnalysis.strengths?.length > 0 && ( // Check existence
                              <p><strong>Strengths:</strong> {performanceAnalysis.strengths.join(', ')}</p>
                          )}
-                         {performanceAnalysis.weaknesses.length > 0 && (
+                         {performanceAnalysis.weaknesses?.length > 0 && ( // Check existence
                              <p><strong>Weaknesses:</strong> {performanceAnalysis.weaknesses.join(', ')}</p>
                          )}
                          <p><strong>Suggestions:</strong></p>
                          <ul className="list-disc pl-5 space-y-1">
-                             {performanceAnalysis.suggestions.map((suggestion, index) => (
+                             {performanceAnalysis.suggestions?.map((suggestion, index) => ( // Check existence
                                  <li key={index}>{suggestion}</li>
                              ))}
                          </ul>
@@ -679,7 +744,7 @@ export default function MathQuestPage() {
                          <Button
                            variant="outline"
                            onClick={handleGoToPrevious}
-                           disabled={currentHistoryIndex <= 0 || isLoading || isCheckingAnswer}
+                           disabled={currentHistoryIndex <= 0 || isLoading} // Only disable if at start or loading
                            aria-label="Previous Question"
                          >
                            <ArrowLeft className="h-4 w-4 mr-1" /> Previous
@@ -687,7 +752,7 @@ export default function MathQuestPage() {
                          <Button
                            variant="outline"
                            onClick={handleGoToNext}
-                           disabled={currentHistoryIndex >= history.length - 1 || isLoading || isCheckingAnswer}
+                           disabled={currentHistoryIndex >= history.length - 1 || isLoading} // Only disable if at end or loading
                            aria-label="Next Question"
                          >
                            Next <ArrowRight className="h-4 w-4 ml-1" />
@@ -696,14 +761,14 @@ export default function MathQuestPage() {
 
                      {/* Primary Action Button: New Question or Finish */}
                     <div className="flex gap-2">
-                       {isViewingHistory ? (
+                       {isViewingHistory ? ( // Use derived state
                          <Button
                              onClick={() => {
                                  setCurrentHistoryIndex(history.length - 1); // Jump to latest
                                  setPerformanceAnalysis(null); // Clear analysis if jumping back
                              }}
                              className="bg-secondary hover:bg-secondary/80 text-secondary-foreground"
-                             disabled={isLoading}
+                             disabled={isLoading} // Disable only if loading
                           >
                               <UserCheck className="mr-2 h-4 w-4"/> Go to Latest
                          </Button>
@@ -714,7 +779,7 @@ export default function MathQuestPage() {
                                difficulty: performanceAnalysis.suggestedNextDifficulty || settingsForm.getValues('difficulty'),
                                type: performanceAnalysis.suggestedNextQuestionType || settingsForm.getValues('type'),
                            } : settingsForm.getValues() )} // Use suggestion or current settings
-                           disabled={!canGenerateNew}
+                           disabled={!canGenerateNew} // Use derived state
                            className="min-w-[140px]" // Ensure consistent width
                            aria-live="polite" // Announce loading state change
                          >
@@ -730,7 +795,7 @@ export default function MathQuestPage() {
                          <Button
                             variant="destructive"
                             onClick={handleEndQuest}
-                            disabled={isAnalyzing || history.length === 0 || isLoading}
+                            disabled={isAnalyzing || history.length === 0 || isLoading} // Disable if analyzing, no history, or loading
                             className="min-w-[140px]" // Consistent width
                          >
                            {isAnalyzing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Power className="mr-2 h-4 w-4" />}
@@ -744,9 +809,11 @@ export default function MathQuestPage() {
 
         </CardContent>
          <CardFooter className="justify-center text-xs text-muted-foreground pt-4 border-t bg-gradient-to-r from-blue-50 to-green-50 dark:from-gray-900 dark:to-gray-800">
-             Powered by Generative AI ✨ Math Quest v1.1
+             Powered by Generative AI ✨ Math Quest v1.2
          </CardFooter>
       </Card>
     </div>
   );
 }
+
+    

@@ -3,34 +3,22 @@
  * @fileOverview Generates math questions of varying difficulty and types, including multiple-choice options and explanations.
  *
  * - generateMathQuestion - A function that generates math questions with options and an explanation.
- * - GenerateMathQuestionInput - The input type for the generateMathQuestion function.
- * - GenerateMathQuestionOutput - The return type for the generateMathQuestion function.
  */
 
 import {ai} from '@/ai/ai-instance';
-import {z} from 'genkit';
+import {
+    GenerateMathQuestionInputSchema,
+    GenerateMathQuestionOutputSchema,
+    type GenerateMathQuestionInput, // Import types as well
+    type GenerateMathQuestionOutput
+} from '@/ai/schemas/math-question'; // Import from the new schema file
 
-const GenerateMathQuestionInputSchema = z.object({
-  difficulty: z.enum(['easy', 'medium', 'hard']).describe('The difficulty level of the question.'),
-  type: z.enum(['algebra', 'calculus', 'geometry', 'trigonometry']).describe('The type of math question.'),
-  studentClass: z.string().optional().describe('The grade level or class of the student (e.g., "8th Grade", "High School", "College Freshman").'), // Added class/grade
-  examType: z.string().optional().describe('The type of exam context (e.g., "Standard Test", "Competitive Exam Prep", "Homework").') // Added exam type
-});
-export type GenerateMathQuestionInput = z.infer<typeof GenerateMathQuestionInputSchema>;
-
-// Updated schema to include explanation
-const GenerateMathQuestionOutputSchema = z.object({
-  question: z.string().describe('The math question.'),
-  answer: z.string().describe("The correct answer to the math question. Should be the numerical value or simplified expression ONLY (e.g., '5', 'x=2', 'sin(pi/4)')."),
-  options: z.array(z.string()).length(4).describe("An array of 4 multiple-choice options. One of these options MUST be the correct 'answer'. The options should be plausible distractors."),
-  explanation: z.string().describe("A step-by-step explanation of how to arrive at the correct answer.") // Added explanation field
-});
-export type GenerateMathQuestionOutput = z.infer<typeof GenerateMathQuestionOutputSchema>;
-
-// Export the output type for use in performance analysis
-export type { GenerateMathQuestionOutput };
+// Re-export types needed elsewhere (like in page.tsx or analysis flow)
+// This is allowed in 'use server' files as long as they are just type exports
+export type { GenerateMathQuestionInput, GenerateMathQuestionOutput };
 
 
+// Only export the async function
 export async function generateMathQuestion(input: GenerateMathQuestionInput): Promise<GenerateMathQuestionOutput> {
   return generateMathQuestionFlow(input);
 }
@@ -58,6 +46,7 @@ Provide the correct answer to the question, exactly 4 multiple-choice options, a
 7.  Provide a clear, concise, step-by-step 'explanation' for solving the question in the 'explanation' field. This should guide someone through the process of reaching the correct answer.`,
 });
 
+// Define the flow internally, do not export it directly
 const generateMathQuestionFlow = ai.defineFlow<
   typeof GenerateMathQuestionInputSchema,
   typeof GenerateMathQuestionOutputSchema
@@ -80,8 +69,15 @@ const generateMathQuestionFlow = ai.defineFlow<
      // If the correct answer isn't in the options, replace the last option
      // This is a fallback, the prompt should ideally enforce this.
      console.warn("Correct answer not found in options, replacing one option.");
-     cleanedOptions[cleanedOptions.length - 1] = cleanedAnswer;
-     // Optionally shuffle the options again
+     // Find a random index to replace, except if it happens to be the correct answer already (unlikely but possible)
+     let replaceIndex = Math.floor(Math.random() * cleanedOptions.length);
+     // Avoid replacing if the randomly selected option *is* somehow the correct answer after cleaning
+     if(compareAnswers(cleanedOptions[replaceIndex], cleanedAnswer)) {
+         replaceIndex = (replaceIndex + 1) % cleanedOptions.length; // Try the next index
+     }
+     cleanedOptions[replaceIndex] = cleanedAnswer;
+
+     // Optionally shuffle the options again to hide the replaced position
      cleanedOptions.sort(() => Math.random() - 0.5);
   }
 
@@ -95,7 +91,10 @@ const generateMathQuestionFlow = ai.defineFlow<
 
 
 // Helper function for comparing answers (copied from page.tsx for consistency)
-const compareAnswers = (userAnswerStr: string, correctAnswerStr: string): boolean => {
+// Keep this internal or move to a shared utils file if needed elsewhere
+const compareAnswers = (userAnswerStr: string | undefined, correctAnswerStr: string): boolean => {
+  if (userAnswerStr === undefined) return false; // Handle undefined user answer
+
   const normalize = (str: string) => str.trim().toLowerCase().replace(/\s+/g, ''); // Remove all whitespace and convert to lowercase
 
   const normUserAnswer = normalize(userAnswerStr);
