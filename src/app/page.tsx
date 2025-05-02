@@ -7,7 +7,7 @@ import * as z from 'zod';
 import {
   generateMathQuestion,
   type GenerateMathQuestionInput,
-  type GenerateMathQuestionOutput,
+  type GenerateMathQuestionOutput, // Type now includes explanation
 } from '@/ai/flows/generate-math-question';
 import { Button } from '@/components/ui/button';
 import {
@@ -26,7 +26,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"; // Import RadioGroup components
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
@@ -35,8 +35,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, BrainCircuit, CheckCircle, XCircle, Sigma, Calculator, Shapes, Pi } from 'lucide-react';
-import { cn } from '@/lib/utils'; // Import cn utility
+import { Loader2, BrainCircuit, CheckCircle, XCircle, Sigma, Calculator, Shapes, Pi, Lightbulb } from 'lucide-react'; // Added Lightbulb icon
+import { cn } from '@/lib/utils';
+import { Separator } from '@/components/ui/separator'; // Import Separator
 
 const QuestionSettingsSchema = z.object({
   difficulty: z.enum(['easy', 'medium', 'hard']),
@@ -45,7 +46,6 @@ const QuestionSettingsSchema = z.object({
 
 type QuestionSettings = z.infer<typeof QuestionSettingsSchema>;
 
-// Updated AnswerSchema for RadioGroup
 const AnswerSchema = z.object({
   userAnswer: z.string({
     required_error: "Please select an answer.",
@@ -67,20 +67,29 @@ const compareAnswers = (userAnswerStr: string, correctAnswerStr: string): boolea
     return true;
   }
 
-  // Attempt numerical comparison for cases where it might apply
-  const userNum = parseFloat(normUserAnswer);
-  const correctNum = parseFloat(normCorrectAnswer);
+  // Attempt numerical comparison
+  try {
+    const userNum = parseFloat(normUserAnswer);
+    const correctNum = parseFloat(normCorrectAnswer);
 
-  // Check if both are valid numbers and are approximately equal (tolerance for floating point)
-  if (!isNaN(userNum) && !isNaN(correctNum)) {
-    // Define a small tolerance for floating point comparison
-    const tolerance = 1e-6;
-    if (Math.abs(userNum - correctNum) < tolerance) {
-      return true;
+    // Check if both are valid numbers and are approximately equal (tolerance for floating point)
+    if (!isNaN(userNum) && !isNaN(correctNum)) {
+      const tolerance = 1e-6;
+      if (Math.abs(userNum - correctNum) < tolerance) {
+        return true;
+      }
     }
+  } catch(e) {
+    // Ignore parsing errors if they are not numbers
   }
 
-  // Add more sophisticated comparison logic here if needed (e.g., symbolic math library)
+    // Basic expression comparison (very naive, could be improved)
+  // Check if normalized strings are equal after removing extra parentheses or spaces
+  const simplifyExpr = (str: string) => str.replace(/\(|\)/g, '').replace(/\s/g, '');
+  if (simplifyExpr(normUserAnswer) === simplifyExpr(normCorrectAnswer)) {
+      return true;
+  }
+
 
   return false; // Default to false if no match
 };
@@ -92,7 +101,7 @@ export default function MathQuestPage() {
   const [isLoading, setIsLoading] = React.useState(false);
   const [isCheckingAnswer, setIsCheckingAnswer] = React.useState(false);
   const [feedback, setFeedback] = React.useState<FeedbackState>('idle');
-  const [shuffledOptions, setShuffledOptions] = React.useState<string[]>([]); // State for shuffled options
+  const [shuffledOptions, setShuffledOptions] = React.useState<string[]>([]);
   const { toast } = useToast();
 
   const settingsForm = useForm<QuestionSettings>({
@@ -106,44 +115,45 @@ export default function MathQuestPage() {
   const answerForm = useForm<AnswerFormData>({
     resolver: zodResolver(AnswerSchema),
     defaultValues: {
-      userAnswer: '', // Initialize userAnswer for RadioGroup
+      userAnswer: '',
     },
   });
 
-  // Function to shuffle array (Fisher-Yates algorithm)
+  // Function to shuffle array (Fisher-Yates algorithm) - client side only
   const shuffleArray = (array: string[]) => {
     let currentIndex = array.length, randomIndex;
-    const newArray = [...array]; // Create a copy
-    // While there remain elements to shuffle.
+    const newArray = [...array];
     while (currentIndex !== 0) {
-      // Pick a remaining element.
       randomIndex = Math.floor(Math.random() * currentIndex);
       currentIndex--;
-      // And swap it with the current element.
       [newArray[currentIndex], newArray[randomIndex]] = [
         newArray[randomIndex], newArray[currentIndex]];
     }
     return newArray;
   };
 
+  // useEffect to shuffle options when currentQuestion changes and is available
+  React.useEffect(() => {
+    if (currentQuestion?.options) {
+      setShuffledOptions(shuffleArray(currentQuestion.options));
+    } else {
+      setShuffledOptions([]);
+    }
+  }, [currentQuestion?.options]); // Dependency array includes options specifically
+
 
   const handleGenerateQuestion = async (data: QuestionSettings) => {
     setIsLoading(true);
     setFeedback('idle');
     setCurrentQuestion(null);
-    setShuffledOptions([]); // Clear shuffled options
-    answerForm.reset(); // Clear previous answer selection
-    answerForm.clearErrors(); // Clear previous validation errors
-    setIsCheckingAnswer(false); // Ensure check button is enabled
+    setShuffledOptions([]);
+    answerForm.reset();
+    answerForm.clearErrors();
+    setIsCheckingAnswer(false); // Reset checking state
     try {
       const result = await generateMathQuestion(data);
       setCurrentQuestion(result);
-      // Shuffle options only if they exist and have changed
-      if (result.options && result.options !== currentQuestion?.options) {
-         setShuffledOptions(shuffleArray(result.options));
-      } else if (!result.options) {
-         setShuffledOptions([]); // Clear options if none returned
-      }
+      // Options will be shuffled by the useEffect hook
     } catch (error) {
       console.error('Error generating question:', error);
       toast({
@@ -159,7 +169,7 @@ export default function MathQuestPage() {
   const handleCheckAnswer = (data: AnswerFormData) => {
     if (!currentQuestion || isCheckingAnswer) return;
 
-    setIsCheckingAnswer(true); // Prevent multiple submissions while checking
+    setIsCheckingAnswer(true); // Prevent multiple submissions
 
     const isCorrect = compareAnswers(data.userAnswer, currentQuestion.answer);
 
@@ -168,14 +178,16 @@ export default function MathQuestPage() {
       title: isCorrect ? 'Correct!' : 'Incorrect',
       description: isCorrect
         ? 'Excellent work!'
-        : `The correct answer is: ${currentQuestion.answer}`,
+        : `The correct answer is marked above. See explanation below.`, // Updated message for incorrect
       variant: isCorrect ? 'default' : 'destructive',
       className: isCorrect ? 'bg-accent text-accent-foreground border-accent' : '',
     });
 
-    // Set checking state back to false after feedback is processed
-    // This allows the "New Question" button to be enabled again.
-    setIsCheckingAnswer(false);
+    // Keep isCheckingAnswer true until a new question is generated or reset
+    // This prevents re-submitting the same answer.
+    // The "New Question" button becomes the primary action after checking.
+    // We no longer set it back to false here.
+    // setIsCheckingAnswer(false); // Removed this line
   };
 
   const getIconForType = (type: GenerateMathQuestionInput['type']) => {
@@ -217,7 +229,7 @@ export default function MathQuestPage() {
                     <Select
                       onValueChange={field.onChange}
                       defaultValue={field.value}
-                      disabled={isLoading} // Only disable during loading new question
+                      disabled={isLoading}
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -243,7 +255,7 @@ export default function MathQuestPage() {
                     <Select
                       onValueChange={field.onChange}
                       defaultValue={field.value}
-                      disabled={isLoading} // Only disable during loading new question
+                      disabled={isLoading}
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -292,7 +304,7 @@ export default function MathQuestPage() {
                  Question:
               </div>
               {/* Use prose for potentially complex math rendering later */}
-              <div className="text-xl font-medium pl-7 prose prose-sm max-w-none">
+              <div className="text-xl font-medium pl-7 prose prose-sm max-w-none break-words"> {/* Added break-words */}
                  {currentQuestion.question}
               </div>
 
@@ -300,7 +312,7 @@ export default function MathQuestPage() {
               <Form {...answerForm}>
                  <form
                    onSubmit={answerForm.handleSubmit(handleCheckAnswer)}
-                   className="space-y-4" // Changed layout for radio group
+                   className="space-y-4"
                  >
                    <FormField
                      control={answerForm.control}
@@ -312,16 +324,14 @@ export default function MathQuestPage() {
                            <RadioGroup
                              onValueChange={field.onChange}
                              defaultValue={field.value}
-                             // Only disable the options if the answer was correct
-                             // Keep enabled if incorrect to allow another try or review
-                             disabled={feedback === 'correct'}
+                             // Disable if feedback is given (correct or incorrect) or while checking
+                             disabled={feedback !== 'idle' || isCheckingAnswer}
                              className="flex flex-col space-y-2"
                            >
                              {shuffledOptions.map((option, index) => {
                                const isSelected = field.value === option;
                                const isCorrectOption = compareAnswers(option, currentQuestion.answer);
-                               // Show feedback only after an answer has been submitted (feedback is not 'idle')
-                               const showFeedback = feedback !== 'idle';
+                               const showFeedback = feedback !== 'idle'; // Determine if feedback should be shown
                                return (
                                 <FormItem key={index} className="flex items-center space-x-3 space-y-0">
                                     <FormControl>
@@ -330,7 +340,7 @@ export default function MathQuestPage() {
                                             id={`option-${index}`}
                                             className={cn(
                                               'transition-colors duration-200',
-                                              // Apply styles based on feedback state
+                                              // Apply styles based on feedback state ONLY after check
                                               showFeedback && isCorrectOption && 'border-accent ring-accent text-accent', // Correct option highlight
                                               showFeedback && isSelected && !isCorrectOption && 'border-destructive ring-destructive text-destructive' // Incorrect selected option highlight
                                             )}
@@ -340,7 +350,7 @@ export default function MathQuestPage() {
                                         htmlFor={`option-${index}`}
                                         className={cn(
                                           "font-normal cursor-pointer flex-1",
-                                           // Apply styles based on feedback state
+                                           // Apply styles based on feedback state ONLY after check
                                           showFeedback && isCorrectOption && 'text-accent font-medium', // Correct option text
                                           showFeedback && isSelected && !isCorrectOption && 'text-destructive line-through' // Incorrect selected option text
                                         )}
@@ -359,29 +369,35 @@ export default function MathQuestPage() {
                        </FormItem>
                      )}
                    />
-                  {/* Disable Check Answer button if loading new question, or if already answered correctly */}
-                  <Button type="submit" disabled={isLoading || feedback === 'correct' || isCheckingAnswer} className="w-full sm:w-auto">
-                     {isCheckingAnswer ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} {/* Show loader only when actively checking */}
+                  {/* Disable Check Answer button if loading new question, feedback is given, or actively checking */}
+                  <Button type="submit" disabled={isLoading || feedback !== 'idle' || isCheckingAnswer} className="w-full sm:w-auto">
+                     {isCheckingAnswer && feedback === 'idle' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} {/* Show loader only when actively checking */}
                     Check Answer
                   </Button>
                 </form>
               </Form>
 
-              {/* Feedback Area */}
-               <div id="feedback-message" className="min-h-[40px] mt-4"> {/* Reserve space */}
-                 {feedback === 'correct' && (
-                   <div className="flex items-center p-3 rounded-md bg-accent/10 text-accent border border-accent transition-opacity duration-300 ease-in-out opacity-100">
-                     <CheckCircle className="h-5 w-5 mr-2" />
-                     <span className="font-medium">Correct! Well done. Press 'New Question' to continue.</span>
+              {/* Explanation Area - Conditionally displayed after checking answer */}
+               {feedback !== 'idle' && currentQuestion.explanation && (
+                 <>
+                   <Separator className="my-4" />
+                   <div className="space-y-2">
+                       <div className="flex items-center text-lg font-semibold text-primary">
+                           <Lightbulb className="h-5 w-5 mr-2" />
+                           Explanation:
+                       </div>
+                       <div className="text-sm text-muted-foreground prose prose-sm max-w-none pl-7 break-words"> {/* Added break-words */}
+                           {/* Render explanation - could enhance with markdown rendering later */}
+                           {currentQuestion.explanation.split('\n').map((line, index) => (
+                            <React.Fragment key={index}>
+                                {line}
+                                <br />
+                            </React.Fragment>
+                           ))}
+                       </div>
                    </div>
-                 )}
-                 {feedback === 'incorrect' && (
-                   <div className="flex items-center p-3 rounded-md bg-destructive/10 text-destructive border border-destructive transition-opacity duration-300 ease-in-out opacity-100">
-                     <XCircle className="h-5 w-5 mr-2" />
-                     <span className="font-medium">Incorrect. The correct answer is marked above. Try again or get a new question.</span>
-                   </div>
-                 )}
-              </div>
+                 </>
+               )}
 
             </div>
           )}
