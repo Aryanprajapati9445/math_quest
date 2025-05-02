@@ -15,6 +15,7 @@ import {
 import type {
     AnalyzePerformanceInput,
     AnalyzePerformanceOutput,
+    UserActivityRecord // Import UserActivityRecord type
 } from '@/ai/schemas/performance-analysis'; // Import types from the schema file
 import { Button } from '@/components/ui/button';
 import {
@@ -191,8 +192,11 @@ export default function MathQuestPage() {
 
     const currentAttempt = history[currentHistoryIndex];
     const currentQuestion = currentAttempt?.questionData;
-    // Define isViewingHistory based on current state
-    const isViewingHistory = currentHistoryIndex >= 0 && currentHistoryIndex < history.length - 1;
+
+    // Define isViewingHistory based on current state, using useMemo
+    const isViewingHistory = React.useMemo(() => {
+        return currentHistoryIndex >= 0 && currentHistoryIndex < history.length - 1;
+    }, [currentHistoryIndex, history.length]);
 
     // --- Forms ---
     const settingsForm = useForm<QuestionSettings>({
@@ -228,7 +232,8 @@ export default function MathQuestPage() {
             setIsCheckingAnswer(false);
             setShuffledOptions([]);
         }
-    }, [currentHistoryIndex, history, answerForm]); // Dependencies
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- answerForm should not be a dependency
+    }, [currentHistoryIndex, history, currentAttempt]); // Added currentAttempt for clarity
 
 
   // Shuffle options when a new question is loaded, not viewing history, and not answered yet
@@ -241,6 +246,7 @@ export default function MathQuestPage() {
       } else {
           setShuffledOptions([]); // Clear if no options
       }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only needs to run when question, feedback, or view mode changes
   }, [currentQuestion, feedback, isViewingHistory]); // Add feedback and isViewingHistory
 
 
@@ -359,8 +365,8 @@ export default function MathQuestPage() {
         setPerformanceAnalysis(null); // Clear previous analysis
 
         // Prepare data for analysis flow
-        const analysisInput: AnalyzePerformanceInput = {
-            activityHistory: history.map(attempt => ({
+        const activityHistoryForAnalysis: UserActivityRecord[] = history
+            .map(attempt => ({
                 question: attempt.questionData.question,
                 difficulty: attempt.settings.difficulty, // Use settings from the attempt
                 type: attempt.settings.type,           // Use settings from the attempt
@@ -369,7 +375,11 @@ export default function MathQuestPage() {
                 // Ensure isCorrect is boolean, default to false if undefined (e.g., skipped)
                 isCorrect: attempt.isCorrect === undefined ? false : attempt.isCorrect,
                 timestamp: attempt.timestamp,
-            })).filter(a => a.userAnswer !== undefined), // Only include answered questions
+            }))
+            .filter((a): a is UserActivityRecord & { userAnswer: string } => a.userAnswer !== undefined); // Type guard to filter unanswered and ensure userAnswer is string
+
+        const analysisInput: AnalyzePerformanceInput = {
+            activityHistory: activityHistoryForAnalysis,
              // Optional: Add desired focus from settings if applicable
              desiredFocus: settingsForm.getValues().type || settingsForm.getValues().difficulty || undefined, // Ensure it's string or undefined
         };
@@ -863,7 +873,7 @@ export default function MathQuestPage() {
 
         </CardContent>
          <CardFooter className="justify-center text-xs text-muted-foreground pt-4 border-t bg-gradient-to-r from-blue-50 to-green-50 dark:from-gray-900 dark:to-gray-800">
-             Powered by Generative AI ✨ Math Quest v1.2
+             Powered by Generative AI ✨ Math Quest v1.3
          </CardFooter>
       </Card>
     </div>
