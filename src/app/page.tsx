@@ -131,16 +131,19 @@ const compareAnswers = (userAnswerStr: string | undefined, correctAnswerStr: str
   return false; // Default to false if no match
 };
 
+// Use a non-empty value for the "None" option
+const NONE_VALUE = "none_value";
+
 const DEFAULT_SETTINGS: QuestionSettings = {
     difficulty: 'easy',
     type: 'algebra',
-    studentClass: '', // Default to empty string
-    examType: '',     // Default to empty string
+    studentClass: NONE_VALUE, // Default to NONE_VALUE
+    examType: NONE_VALUE,     // Default to NONE_VALUE
 };
 
 // Define options for the Select components
 const classOptions = [
-  { value: "", label: "None" },
+  { value: NONE_VALUE, label: "None" },
   { value: "Middle School", label: "Middle School" },
   { value: "High School Freshman", label: "High School Freshman" },
   { value: "High School Sophomore", label: "High School Sophomore" },
@@ -154,7 +157,7 @@ const classOptions = [
 ];
 
 const examOptions = [
-  { value: "", label: "None" },
+  { value: NONE_VALUE, label: "None" },
   { value: "Homework", label: "Homework" },
   { value: "Quiz", label: "Quiz" },
   { value: "Midterm Exam", label: "Midterm Exam" },
@@ -261,11 +264,11 @@ export default function MathQuestPage() {
     setIsCheckingAnswer(false);
     setPerformanceAnalysis(null); // Clear old analysis
 
-    // Prepare input, ensuring optional fields are passed correctly (undefined if empty string)
+    // Prepare input, ensuring optional fields are passed correctly (undefined if "none_value")
     const inputData: GenerateMathQuestionInput = {
         ...data,
-        studentClass: data.studentClass || undefined,
-        examType: data.examType || undefined,
+        studentClass: data.studentClass === NONE_VALUE ? undefined : data.studentClass,
+        examType: data.examType === NONE_VALUE ? undefined : data.examType,
     };
 
     try {
@@ -273,7 +276,14 @@ export default function MathQuestPage() {
       const newAttempt: QuestionAttempt = {
         questionData: result,
         timestamp: new Date().toISOString(),
-        settings: data, // Store the user-selected settings (which might include empty strings)
+        // Store the user-selected settings (which might include NONE_VALUE)
+        // Pass the original data (which might contain NONE_VALUE) to the attempt history
+        settings: {
+            difficulty: data.difficulty,
+            type: data.type,
+            studentClass: data.studentClass, // Store the potentially NONE_VALUE
+            examType: data.examType, // Store the potentially NONE_VALUE
+        },
       };
       // Add to history and move index to the new question
       const newHistory = [...history, newAttempt];
@@ -335,6 +345,7 @@ export default function MathQuestPage() {
 
     // Important: Keep isCheckingAnswer true after checking to prevent re-submission
     // It will be reset only when navigating or generating a new question.
+    // This logic was moved here as per previous request
   };
 
     const handleGoToPrevious = () => {
@@ -368,23 +379,31 @@ export default function MathQuestPage() {
         const activityHistoryForAnalysis: UserActivityRecord[] = history
             .map(attempt => ({
                 question: attempt.questionData.question,
-                difficulty: attempt.settings.difficulty, // Use settings from the attempt
-                type: attempt.settings.type,           // Use settings from the attempt
+                // Use settings from the attempt (convert NONE_VALUE back if needed, though schema handles enums)
+                difficulty: attempt.settings.difficulty,
+                type: attempt.settings.type,
                 userAnswer: attempt.userAnswer,
                 correctAnswer: attempt.questionData.answer,
                 // Ensure isCorrect is boolean, default to false if undefined (e.g., skipped)
                 isCorrect: attempt.isCorrect === undefined ? false : attempt.isCorrect,
                 timestamp: attempt.timestamp,
             }))
-            .filter((a): a is UserActivityRecord & { userAnswer: string } => a.userAnswer !== undefined); // Type guard to filter unanswered and ensure userAnswer is string
+             // Filter out attempts where userAnswer is undefined AND isCorrect is undefined (i.e., truly skipped/unanswered)
+            .filter(attempt => attempt.userAnswer !== undefined || attempt.isCorrect !== undefined);
+
+
+        // Get current settings, handling NONE_VALUE
+        const currentSettings = settingsForm.getValues();
+        const desiredFocusType = currentSettings.type !== NONE_VALUE ? currentSettings.type : undefined;
+        const desiredFocusDifficulty = currentSettings.difficulty; // Difficulty always has a value
 
         const analysisInput: AnalyzePerformanceInput = {
             activityHistory: activityHistoryForAnalysis,
-             // Optional: Add desired focus from settings if applicable
-             desiredFocus: settingsForm.getValues().type || settingsForm.getValues().difficulty || undefined, // Ensure it's string or undefined
+            // Use the non-NONE_VALUE type or difficulty as focus, or undefined
+            desiredFocus: desiredFocusType || desiredFocusDifficulty || undefined,
         };
 
-        // Don't analyze if there are no *answered* questions
+        // Don't analyze if there are no *answered* or *attempted* questions
         if (analysisInput.activityHistory.length === 0) {
             toast({
                 title: "No Answers",
@@ -525,7 +544,7 @@ export default function MathQuestPage() {
                                 <FormLabel>Class/Grade (Optional)</FormLabel>
                                  <Select
                                      onValueChange={field.onChange}
-                                     value={field.value ?? ''} // Use empty string for 'None'
+                                     value={field.value ?? NONE_VALUE} // Use NONE_VALUE for 'None'
                                  >
                                      <FormControl>
                                          <SelectTrigger>
@@ -552,7 +571,7 @@ export default function MathQuestPage() {
                                 <FormLabel>Exam Context (Optional)</FormLabel>
                                 <Select
                                      onValueChange={field.onChange}
-                                     value={field.value ?? ''} // Use empty string for 'None'
+                                     value={field.value ?? NONE_VALUE} // Use NONE_VALUE for 'None'
                                  >
                                      <FormControl>
                                          <SelectTrigger>
@@ -629,13 +648,14 @@ export default function MathQuestPage() {
             {(!isLoading || history.length > 0) && currentQuestion && (
                 <div className="flex-grow p-6 border rounded-lg bg-card shadow-inner space-y-4">
                     {/* Question Header */}
-                    <div className="flex items-center justify-between text-muted-foreground text-sm">
+                    <div className="flex items-center justify-between text-muted-foreground text-sm flex-wrap gap-x-2"> {/* Added flex-wrap and gap */}
                        <span>{`Question ${currentHistoryIndex + 1} of ${history.length}`}</span>
                        <div className="flex items-center space-x-1 flex-wrap"> {/* Added flex-wrap */}
                          {getIconForType(currentAttempt?.settings?.type)}
                          <span className="truncate">{currentAttempt?.settings?.type || 'N/A'} | {currentAttempt?.settings?.difficulty || 'N/A'}</span>
-                         {currentAttempt?.settings?.studentClass && <span className="hidden sm:inline truncate"> | {currentAttempt.settings.studentClass}</span>}
-                         {currentAttempt?.settings?.examType && <span className="hidden sm:inline truncate"> | {currentAttempt.settings.examType}</span>}
+                         {/* Display class/exam only if not NONE_VALUE */}
+                         {currentAttempt?.settings?.studentClass && currentAttempt.settings.studentClass !== NONE_VALUE && <span className="hidden sm:inline truncate"> | {currentAttempt.settings.studentClass}</span>}
+                         {currentAttempt?.settings?.examType && currentAttempt.settings.examType !== NONE_VALUE && <span className="hidden sm:inline truncate"> | {currentAttempt.settings.examType}</span>}
                        </div>
                     </div>
                      <Separator/>
@@ -662,7 +682,7 @@ export default function MathQuestPage() {
                                <RadioGroup
                                  onValueChange={field.onChange}
                                  value={field.value} // Controlled component
-                                 // Disable if feedback is given OR if loading new q
+                                 // Disable if feedback is given OR if loading new q OR already checking
                                  disabled={feedback !== 'idle' || isLoading || isCheckingAnswer}
                                  className="grid grid-cols-1 sm:grid-cols-2 gap-3" // Responsive grid
                                >
@@ -674,7 +694,11 @@ export default function MathQuestPage() {
                                         ? (currentAttempt.isCorrect ? 'correct' : 'incorrect')
                                         : 'idle';
                                     // Prioritize attempt feedback if viewing history, otherwise use current feedback
-                                    const finalFeedbackState = (isViewingHistory && attemptFeedbackState !== 'idle') ? attemptFeedbackState : feedback;
+                                    // Also consider if we are currently checking (isCheckingAnswer)
+                                    const finalFeedbackState = (isViewingHistory && attemptFeedbackState !== 'idle')
+                                        ? attemptFeedbackState
+                                        : (isCheckingAnswer ? (isCorrectOption ? 'correct' : 'incorrect') : feedback);
+
 
                                    return (
                                     <FormItem
@@ -701,7 +725,7 @@ export default function MathQuestPage() {
                                                     finalFeedbackState !== 'idle' && isCorrectOption && 'border-accent ring-accent text-accent',
                                                     finalFeedbackState !== 'idle' && isSelected && !isCorrectOption && 'border-destructive ring-destructive text-destructive'
                                                 )}
-                                                // Disable individual items based on feedback state or loading
+                                                // Disable individual items based on feedback state or loading/checking
                                                 disabled={finalFeedbackState !== 'idle' || isLoading || isCheckingAnswer}
                                             />
                                         </FormControl>
@@ -842,6 +866,9 @@ export default function MathQuestPage() {
                                ...settingsForm.getValues(), // Keep existing settings
                                difficulty: performanceAnalysis.suggestedNextDifficulty || settingsForm.getValues('difficulty'),
                                type: performanceAnalysis.suggestedNextQuestionType || settingsForm.getValues('type'),
+                               // Carry over class/exam settings if they exist and are not "None"
+                               studentClass: settingsForm.getValues('studentClass') !== NONE_VALUE ? settingsForm.getValues('studentClass') : undefined,
+                               examType: settingsForm.getValues('examType') !== NONE_VALUE ? settingsForm.getValues('examType') : undefined,
                            } : settingsForm.getValues() )} // Use suggestion or current settings
                            disabled={!canGenerateNew} // Use derived state
                            className="min-w-[140px]" // Ensure consistent width
@@ -873,7 +900,7 @@ export default function MathQuestPage() {
 
         </CardContent>
          <CardFooter className="justify-center text-xs text-muted-foreground pt-4 border-t bg-gradient-to-r from-blue-50 to-green-50 dark:from-gray-900 dark:to-gray-800">
-             Powered by Generative AI ✨ Math Quest v1.3
+             Powered by Generative AI ✨ Math Quest v1.4
          </CardFooter>
       </Card>
     </div>
