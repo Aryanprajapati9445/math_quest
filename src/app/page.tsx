@@ -58,7 +58,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
     Loader2, BrainCircuit, CheckCircle, XCircle, Sigma, Calculator, Shapes, Pi,
     Lightbulb, Menu, ArrowLeft, ArrowRight, BarChart, Goal, Sparkles, Power, UserCheck,
-    Flame, Target // Added icons for profile stats
+    Flame, Target, ClipboardCheck // Added ClipboardCheck icon
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // Import Alert
@@ -196,12 +196,14 @@ interface UserProfile {
     lastActiveDate: string | null; // ISO date string (YYYY-MM-DD)
     streak: number;
     questionsAnswered: number;
+    correctAnswers: number; // Added field for correct answers
 }
 
 const initialUserProfile: UserProfile = {
     lastActiveDate: null,
     streak: 0,
     questionsAnswered: 0,
+    correctAnswers: 0, // Initialize correct answers
 };
 
 // localStorage keys
@@ -240,8 +242,12 @@ export default function MathQuestPage() {
             const storedProfile = localStorage.getItem(PROFILE_STORAGE_KEY);
             if (storedProfile) {
                 const parsedProfile = JSON.parse(storedProfile) as UserProfile;
-                // Basic validation
-                if (parsedProfile && typeof parsedProfile.streak === 'number' && typeof parsedProfile.questionsAnswered === 'number') {
+                // Basic validation including correctAnswers
+                if (parsedProfile &&
+                    typeof parsedProfile.streak === 'number' &&
+                    typeof parsedProfile.questionsAnswered === 'number' &&
+                    typeof parsedProfile.correctAnswers === 'number') // Validate new field
+                {
                     // Check streak based on last active date
                     const todayStr = format(new Date(), 'yyyy-MM-dd');
                     let updatedStreak = parsedProfile.streak;
@@ -253,7 +259,10 @@ export default function MathQuestPage() {
                     }
                     setUserProfile({ ...parsedProfile, streak: updatedStreak });
                 } else {
-                    console.warn("Invalid profile data found in localStorage.");
+                    console.warn("Invalid or incomplete profile data found in localStorage. Resetting.");
+                    // Optionally reset to initial profile if data is corrupt
+                     localStorage.removeItem(PROFILE_STORAGE_KEY);
+                     setUserProfile(initialUserProfile);
                 }
             }
 
@@ -269,6 +278,8 @@ export default function MathQuestPage() {
                     }
                 } else {
                      console.warn("Invalid history data found in localStorage.");
+                     localStorage.removeItem(HISTORY_STORAGE_KEY); // Clear invalid history
+                     setHistory([]);
                 }
             }
         } catch (error) {
@@ -278,6 +289,11 @@ export default function MathQuestPage() {
                 description: "Could not load previous session data.",
                 variant: "destructive",
             });
+            // Clear potentially corrupt data on error
+            localStorage.removeItem(PROFILE_STORAGE_KEY);
+            localStorage.removeItem(HISTORY_STORAGE_KEY);
+            setUserProfile(initialUserProfile);
+            setHistory([]);
         } finally {
             setIsHydrated(true); // Mark as hydrated
         }
@@ -472,7 +488,7 @@ export default function MathQuestPage() {
         return newHistory;
      });
 
-    // Update user profile stats (streak, questions answered)
+    // Update user profile stats (streak, questions answered, correct answers)
     setUserProfile(prevProfile => {
         const todayStr = format(new Date(), 'yyyy-MM-dd');
         let newStreak = prevProfile.streak;
@@ -494,6 +510,7 @@ export default function MathQuestPage() {
             ...prevProfile,
             streak: newStreak,
             questionsAnswered: prevProfile.questionsAnswered + 1,
+            correctAnswers: isCorrect ? prevProfile.correctAnswers + 1 : prevProfile.correctAnswers, // Increment correct answers if correct
             lastActiveDate: newLastActiveDate,
         };
     });
@@ -831,9 +848,9 @@ export default function MathQuestPage() {
                         <Flame className="h-5 w-5 mr-1 text-orange-400" />
                         <span>{userProfile.streak}</span>
                     </div>
-                    <div className="flex items-center" title="Total Questions Answered">
-                        <Target className="h-5 w-5 mr-1 text-green-500" />
-                        <span>{userProfile.questionsAnswered}</span>
+                    <div className="flex items-center" title={`Correct: ${userProfile.correctAnswers} / Total: ${userProfile.questionsAnswered}`}>
+                        <ClipboardCheck className="h-5 w-5 mr-1 text-green-400" />
+                        <span>{userProfile.correctAnswers}/{userProfile.questionsAnswered}</span>
                     </div>
                 </div>
               )}
@@ -1156,7 +1173,7 @@ export default function MathQuestPage() {
 
         </CardContent>
          <CardFooter className="justify-center text-xs text-muted-foreground pt-4 border-t bg-gradient-to-r from-blue-50 to-green-50 dark:from-gray-900 dark:to-gray-800">
-             Powered by Generative AI ✨ Math Quest v1.6
+             Powered by Generative AI ✨ Math Quest v1.7
          </CardFooter>
       </Card>
     </div>
