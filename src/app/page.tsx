@@ -57,10 +57,12 @@ import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import {
     Loader2, BrainCircuit, CheckCircle, XCircle, Sigma, Calculator, Shapes, Pi,
-    Lightbulb, Menu, ArrowLeft, ArrowRight, BarChart, Goal, Sparkles, Power, UserCheck // Added icons
+    Lightbulb, Menu, ArrowLeft, ArrowRight, BarChart, Goal, Sparkles, Power, UserCheck,
+    Flame, Target // Added icons for profile stats
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // Import Alert
+import { format, isToday, isYesterday, startOfDay } from 'date-fns'; // For date comparison
 
 // Define structure for a single question attempt
 interface QuestionAttempt {
@@ -189,6 +191,22 @@ const compareSettings = (s1?: QuestionSettings, s2?: QuestionSettings): boolean 
            (s1.examType ?? NONE_VALUE) === (s2.examType ?? NONE_VALUE);
 };
 
+// User Profile State
+interface UserProfile {
+    lastActiveDate: string | null; // ISO date string (YYYY-MM-DD)
+    streak: number;
+    questionsAnswered: number;
+}
+
+const initialUserProfile: UserProfile = {
+    lastActiveDate: null,
+    streak: 0,
+    questionsAnswered: 0,
+};
+
+// localStorage keys
+const PROFILE_STORAGE_KEY = 'mathQuestUserProfile';
+const HISTORY_STORAGE_KEY = 'mathQuestHistory'; // Persist history too
 
 export default function MathQuestPage() {
     const [history, setHistory] = React.useState<QuestionAttempt[]>([]);
@@ -202,6 +220,9 @@ export default function MathQuestPage() {
     const [isSheetOpen, setIsSheetOpen] = React.useState(false); // State for Sheet visibility
     const [preloadedAttempt, setPreloadedAttempt] = React.useState<QuestionAttempt | null>(null);
     const isPreloadingRef = React.useRef(false); // Ref to track background preloading
+    const [userProfile, setUserProfile] = React.useState<UserProfile>(initialUserProfile);
+    const [isHydrated, setIsHydrated] = React.useState(false); // Track hydration state
+
     const { toast } = useToast();
 
     const currentAttempt = history[currentHistoryIndex];
@@ -211,6 +232,69 @@ export default function MathQuestPage() {
     const isViewingHistory = React.useMemo(() => {
         return currentHistoryIndex >= 0 && currentHistoryIndex < history.length - 1;
     }, [currentHistoryIndex, history.length]);
+
+    // --- LocalStorage Hydration ---
+    React.useEffect(() => {
+        try {
+            // Load User Profile
+            const storedProfile = localStorage.getItem(PROFILE_STORAGE_KEY);
+            if (storedProfile) {
+                const parsedProfile = JSON.parse(storedProfile) as UserProfile;
+                // Basic validation
+                if (parsedProfile && typeof parsedProfile.streak === 'number' && typeof parsedProfile.questionsAnswered === 'number') {
+                    // Check streak based on last active date
+                    const todayStr = format(new Date(), 'yyyy-MM-dd');
+                    let updatedStreak = parsedProfile.streak;
+                    if (parsedProfile.lastActiveDate) {
+                        const lastDate = new Date(parsedProfile.lastActiveDate);
+                        if (!isToday(lastDate) && !isYesterday(lastDate)) {
+                            updatedStreak = 0; // Reset streak if missed more than a day
+                        }
+                    }
+                    setUserProfile({ ...parsedProfile, streak: updatedStreak });
+                } else {
+                    console.warn("Invalid profile data found in localStorage.");
+                }
+            }
+
+            // Load History
+            const storedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
+            if (storedHistory) {
+                const parsedHistory = JSON.parse(storedHistory) as QuestionAttempt[];
+                 // Basic validation
+                if (Array.isArray(parsedHistory)) {
+                    setHistory(parsedHistory);
+                    if (parsedHistory.length > 0) {
+                        setCurrentHistoryIndex(parsedHistory.length - 1); // Start at the last question
+                    }
+                } else {
+                     console.warn("Invalid history data found in localStorage.");
+                }
+            }
+        } catch (error) {
+            console.error("Failed to load data from localStorage:", error);
+            toast({
+                title: "Load Error",
+                description: "Could not load previous session data.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsHydrated(true); // Mark as hydrated
+        }
+    }, [toast]); // toast is stable
+
+    // --- Persist to LocalStorage ---
+    React.useEffect(() => {
+        if (!isHydrated) return; // Only save after initial hydration
+        try {
+            localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(userProfile));
+            localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+        } catch (error) {
+            console.error("Failed to save data to localStorage:", error);
+            // Optionally show a non-critical toast
+        }
+    }, [userProfile, history, isHydrated]);
+
 
     // --- Forms ---
     const settingsForm = useForm<QuestionSettings>({
@@ -274,7 +358,7 @@ export default function MathQuestPage() {
                  setShuffledOptions([]);
             }
         } else {
-            // Reset form and state if there's no current attempt (e.g., initial load)
+            // Reset form and state if there's no current attempt (e.g., initial load or empty history)
             answerForm.reset({ userAnswer: '' });
             setFeedback('idle');
             setIsCheckingAnswer(false);
@@ -387,6 +471,32 @@ export default function MathQuestPage() {
         }
         return newHistory;
      });
+
+    // Update user profile stats (streak, questions answered)
+    setUserProfile(prevProfile => {
+        const todayStr = format(new Date(), 'yyyy-MM-dd');
+        let newStreak = prevProfile.streak;
+        let newLastActiveDate = prevProfile.lastActiveDate;
+
+        if (prevProfile.lastActiveDate === todayStr) {
+            // Already active today, no change to streak unless resetting (handled on load)
+        } else if (prevProfile.lastActiveDate && isYesterday(new Date(prevProfile.lastActiveDate))) {
+            // Active yesterday, increment streak
+            newStreak += 1;
+            newLastActiveDate = todayStr;
+        } else {
+            // Missed a day or first time, reset streak to 1
+            newStreak = 1;
+            newLastActiveDate = todayStr;
+        }
+
+        return {
+            ...prevProfile,
+            streak: newStreak,
+            questionsAnswered: prevProfile.questionsAnswered + 1,
+            lastActiveDate: newLastActiveDate,
+        };
+    });
 
 
     toast({
@@ -554,7 +664,7 @@ export default function MathQuestPage() {
     // Determine if initial loading state should be shown
     const showInitialLoading = isLoading && history.length === 0;
     // Determine if welcome state should be shown
-    const showWelcome = !isLoading && history.length === 0;
+    const showWelcome = !isLoading && history.length === 0 && isHydrated; // Only show welcome after hydration
 
 
   return (
@@ -649,7 +759,7 @@ export default function MathQuestPage() {
                                 <FormLabel>Class/Grade (Optional)</FormLabel>
                                  <Select
                                      onValueChange={(value) => {
-                                        field.onChange(value);
+                                        field.onChange(value === NONE_VALUE ? undefined : value); // Store undefined if "None"
                                         // Optionally clear preload if class changes here
                                     }}
                                      value={field.value ?? NONE_VALUE} // Use NONE_VALUE for 'None'
@@ -679,7 +789,7 @@ export default function MathQuestPage() {
                                 <FormLabel>Exam Context (Optional)</FormLabel>
                                 <Select
                                      onValueChange={(value) => {
-                                        field.onChange(value);
+                                        field.onChange(value === NONE_VALUE ? undefined : value); // Store undefined if "None"
                                         // Optionally clear preload if exam type changes here
                                     }}
                                      value={field.value ?? NONE_VALUE} // Use NONE_VALUE for 'None'
@@ -714,8 +824,21 @@ export default function MathQuestPage() {
                  <BrainCircuit className="h-8 w-8 mr-2" />
                  <CardTitle className="text-3xl font-bold">Math Quest AI</CardTitle>
              </div>
-             {/* Placeholder for potential right-side icon/button */}
-             <div className="w-10"></div>
+              {/* User Profile Stats */}
+              {isHydrated && (
+                <div className="flex items-center space-x-3 text-sm mr-4">
+                    <div className="flex items-center" title="Daily Streak">
+                        <Flame className="h-5 w-5 mr-1 text-orange-400" />
+                        <span>{userProfile.streak}</span>
+                    </div>
+                    <div className="flex items-center" title="Total Questions Answered">
+                        <Target className="h-5 w-5 mr-1 text-green-500" />
+                        <span>{userProfile.questionsAnswered}</span>
+                    </div>
+                </div>
+              )}
+             {/* Ensure the hamburger menu is not pushed too far left */}
+             <div className="w-10 sm:w-auto"></div> {/* Adjust width for hamburger alignment */}
           </div>
           <CardDescription className="text-lg text-blue-100">
             Sharpen your mind with AI-powered math challenges!
@@ -726,7 +849,14 @@ export default function MathQuestPage() {
 
           {/* Question Display & Interaction Area */}
           <div className="min-h-[300px] flex flex-col"> {/* Ensure minimum height */}
-             {showInitialLoading && ( // Show initial loading state
+             {!isHydrated && ( // Show hydration loading state
+                <div className="flex-grow flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
+                  <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+                  <p>Loading your session...</p>
+                </div>
+             )}
+
+             {isHydrated && showInitialLoading && ( // Show initial generation loading state
                 <div className="flex-grow flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
                   <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
                   <p>Generating your first question...</p>
@@ -734,7 +864,7 @@ export default function MathQuestPage() {
                 </div>
              )}
 
-             {showMainLoading && !showInitialLoading && ( // Show loading new question *only if* actually waiting
+             {isHydrated && showMainLoading && !showInitialLoading && ( // Show loading new question *only if* actually waiting
                 <div className="flex-grow flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
                   <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
                   <p>Generating next question...</p>
@@ -742,7 +872,7 @@ export default function MathQuestPage() {
              )}
 
 
-             {showWelcome && ( // Show welcome/start state
+             {showWelcome && ( // Show welcome/start state only after hydration
                  <div className="flex-grow flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
                     <Sparkles className="h-12 w-12 text-primary mb-4" />
                     <p className="text-lg font-medium mb-2">Welcome to Math Quest AI!</p>
@@ -755,8 +885,8 @@ export default function MathQuestPage() {
                  </div>
              )}
 
-            {/* Only render question area if not actively loading for the user OR if showing historical question */}
-            {(!showMainLoading || isViewingHistory) && currentQuestion && (
+            {/* Only render question area if not actively loading for the user OR if showing historical question AND hydrated */}
+            {isHydrated && (!showMainLoading || isViewingHistory) && currentQuestion && (
                 <div className="flex-grow p-6 border rounded-lg bg-card shadow-inner space-y-4 animate-in fade-in duration-300"> {/* Added fade-in */}
                     {/* Question Header */}
                     <div className="flex items-center justify-between text-muted-foreground text-sm flex-wrap gap-x-2"> {/* Added flex-wrap and gap */}
@@ -935,7 +1065,7 @@ export default function MathQuestPage() {
 
 
             {/* Navigation and Action Buttons */}
-            {history.length > 0 && (
+            {isHydrated && history.length > 0 && ( // Only show buttons after hydration and if history exists
                 <div className="mt-6 p-4 border-t bg-muted/30 flex flex-col sm:flex-row justify-between items-center gap-3">
                     {/* History Navigation */}
                     <div className="flex gap-2">
@@ -1026,7 +1156,7 @@ export default function MathQuestPage() {
 
         </CardContent>
          <CardFooter className="justify-center text-xs text-muted-foreground pt-4 border-t bg-gradient-to-r from-blue-50 to-green-50 dark:from-gray-900 dark:to-gray-800">
-             Powered by Generative AI ✨ Math Quest v1.5
+             Powered by Generative AI ✨ Math Quest v1.6
          </CardFooter>
       </Card>
     </div>
